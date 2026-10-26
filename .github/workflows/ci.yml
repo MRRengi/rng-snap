@@ -1,0 +1,20 @@
+name: ci
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests
+        run: cargo test --release --bins
+      - name: Build
+        run: cargo build --release
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: RengiSnap
+          path: target/release/RengiSnap.exe
