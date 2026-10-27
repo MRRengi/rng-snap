@@ -2,10 +2,13 @@
 
 mod config;
 mod geom;
+mod gifenc;
 mod icon;
 mod image;
+mod mixer;
 mod regions;
 mod select;
+mod videoplan;
 #[cfg(windows)]
 mod win;
 

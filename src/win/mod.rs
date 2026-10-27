@@ -6,8 +6,11 @@ mod elements;
 mod files;
 mod grab;
 mod hook;
+pub mod mp4read;
 mod overlay;
 mod paths;
+mod recbar;
+mod record;
 mod tray;
 mod util;
 mod wins;
@@ -23,10 +26,14 @@ pub const WM_APP_TRAY: u32 = WM_APP + 2;
 pub const WM_APP_KEY: u32 = WM_APP + 3;
 /// The element worker has an answer for the overlay.
 pub const WM_APP_ELEMENTS: u32 = WM_APP + 4;
+/// GIF export progress: wParam = percent, 1000 = done, 1001 = failed.
+pub const WM_APP_GIF: u32 = WM_APP + 5;
 
 pub mod class_name {
     use windows::core::{PCWSTR, w};
     pub const MSG: PCWSTR = w!("RengiSnapMsg");
     pub const OVERLAY: PCWSTR = w!("RengiSnapOverlay");
     pub const CARD: PCWSTR = w!("RengiSnapCard");
+    pub const BAR: PCWSTR = w!("RengiSnapBar");
+    pub const OUTLINE: PCWSTR = w!("RengiSnapOutline");
 }

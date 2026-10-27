@@ -39,6 +39,14 @@ pub struct Config {
     pub recent_folders: Vec<String>,
     /// How long the preview card stays (seconds). 0 = until closed.
     pub card_seconds: u32,
+    /// "photo" or "video": the panel mode used last.
+    pub mode: String,
+    /// 30, 60, 120, or 0 = the monitor's refresh rate.
+    pub video_fps: u32,
+    /// "original", "1080p" or "720p".
+    pub video_res: String,
+    pub system_audio: bool,
+    pub mic: bool,
 }
 
 impl Default for Config {
@@ -50,6 +58,11 @@ impl Default for Config {
             folder: String::new(),
             recent_folders: Vec::new(),
             card_seconds: 6,
+            mode: "photo".into(),
+            video_fps: 60,
+            video_res: "original".into(),
+            system_audio: false,
+            mic: false,
         }
     }
 }
@@ -78,6 +91,11 @@ impl Config {
         get(&t, "folder", &mut c.folder);
         get(&t, "recent_folders", &mut c.recent_folders);
         get(&t, "card_seconds", &mut c.card_seconds);
+        get(&t, "mode", &mut c.mode);
+        get(&t, "video_fps", &mut c.video_fps);
+        get(&t, "video_res", &mut c.video_res);
+        get(&t, "system_audio", &mut c.system_audio);
+        get(&t, "mic", &mut c.mic);
         c.sanitize();
         c
     }
@@ -92,6 +110,15 @@ impl Config {
         }
         if self.card_seconds > 600 {
             self.card_seconds = 600;
+        }
+        if self.mode != "video" {
+            self.mode = "photo".into();
+        }
+        if ![0, 30, 60, 120].contains(&self.video_fps) {
+            self.video_fps = 60;
+        }
+        if !["original", "1080p", "720p"].contains(&self.video_res.as_str()) {
+            self.video_res = "original".into();
         }
         let mut seen = Vec::new();
         self.recent_folders.retain(|f| {
@@ -127,14 +154,19 @@ impl Config {
 
 /// `Snap 2026-10-27 01-42-05.png`, or `... (2).png` and up if taken.
 pub fn capture_file_name(stamp: (u16, u16, u16, u16, u16, u16), exists: impl Fn(&str) -> bool) -> String {
+    stamped_name("Snap", "png", stamp, exists)
+}
+
+/// `{prefix} 2026-10-27 01-42-05.{ext}` with ` (n)` added if taken.
+pub fn stamped_name(prefix: &str, ext: &str, stamp: (u16, u16, u16, u16, u16, u16), exists: impl Fn(&str) -> bool) -> String {
     let (y, mo, d, h, mi, s) = stamp;
-    let base = format!("Snap {y:04}-{mo:02}-{d:02} {h:02}-{mi:02}-{s:02}");
-    let first = format!("{base}.png");
+    let base = format!("{prefix} {y:04}-{mo:02}-{d:02} {h:02}-{mi:02}-{s:02}");
+    let first = format!("{base}.{ext}");
     if !exists(&first) {
         return first;
     }
     (2..)
-        .map(|n| format!("{base} ({n}).png"))
+        .map(|n| format!("{base} ({n}).{ext}"))
         .find(|name| !exists(name))
         .unwrap()
 }
@@ -149,6 +181,14 @@ mod tests {
         assert_eq!(Config::parse(&c.to_text()), c);
         assert_eq!(c.hotkey.key, VK_SCROLL);
         assert!(c.loupe);
+    }
+
+    #[test]
+    fn video_settings() {
+        let c = Config::parse("mode = \"video\"\nvideo_fps = 120\nvideo_res = \"720p\"\nmic = true");
+        assert_eq!((c.mode.as_str(), c.video_fps, c.video_res.as_str(), c.mic), ("video", 120, "720p", true));
+        let c = Config::parse("mode = \"x\"\nvideo_fps = 7\nvideo_res = \"8k\"");
+        assert_eq!((c.mode.as_str(), c.video_fps, c.video_res.as_str()), ("photo", 60, "original"));
     }
 
     #[test]

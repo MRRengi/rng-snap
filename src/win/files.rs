@@ -158,3 +158,39 @@ mod tests {
         assert!(l.ends_with("Screens"));
     }
 }
+
+/// Small popup menu of choices, one checked. Returns the picked index.
+pub fn choice_menu(owner: HWND, at: (i32, i32), labels: &[&str], checked: usize) -> Option<usize> {
+    unsafe {
+        let m = CreatePopupMenu().ok()?;
+        let wides: Vec<Vec<u16>> = labels.iter().map(|l| wide(l)).collect();
+        for (i, w) in wides.iter().enumerate() {
+            let flags = if i == checked { MF_STRING | MF_CHECKED } else { MF_STRING };
+            let _ = AppendMenuW(m, flags, i + 1, PCWSTR(w.as_ptr()));
+        }
+        let cmd = TrackPopupMenuEx(m, (TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN).0, at.0, at.1, owner, None).0 as usize;
+        let _ = DestroyMenu(m);
+        (cmd > 0).then(|| cmd - 1)
+    }
+}
+
+/// Moves a file into `folder`, keeping its name (adds " (n)" if taken).
+pub fn move_into(file: &Path, folder: &Path) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(folder)?;
+    let stem = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = file.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut target = folder.join(file.file_name().unwrap_or_default());
+    let mut n = 2;
+    while target.exists() {
+        if target == file {
+            return Ok(target);
+        }
+        target = folder.join(format!("{stem} ({n}).{ext}"));
+        n += 1;
+    }
+    if std::fs::rename(file, &target).is_err() {
+        std::fs::copy(file, &target)?;
+        std::fs::remove_file(file)?;
+    }
+    Ok(target)
+}

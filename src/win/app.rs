@@ -7,9 +7,12 @@
 
 use super::card::{self, Button, Card};
 use super::d2d::Gfx;
-use super::overlay::{self, Overlay};
+use super::overlay::{self, Overlay, PanelState};
+use super::recbar::{BarButton, RecBar};
+use super::record::{self, Recorder};
 use super::util::log;
-use super::{WM_APP_CAPTURE, WM_APP_TRAY, class_name, clipboard, files, grab, hook, paths, tray, wins};
+use super::{WM_APP_CAPTURE, WM_APP_GIF, WM_APP_TRAY, class_name, clipboard, files, grab, hook, mp4read, paths, tray, wins};
+use crate::videoplan::{self, Res};
 use crate::config::Config;
 use crate::geom::{Point, Rect};
 use crate::image::Frame;
@@ -35,6 +38,18 @@ struct Last {
     saved: Option<PathBuf>,
 }
 
+struct Recording {
+    recorder: Recorder,
+    region: Rect,
+}
+
+struct LastVideo {
+    path: PathBuf,
+    /// Expected decoded frames, for GIF progress.
+    frames: u64,
+    gif_busy: bool,
+}
+
 struct App {
     msg: HWND,
     gfx: Gfx,
@@ -42,7 +57,12 @@ struct App {
     cfg_path: Option<PathBuf>,
     overlay: Overlay,
     card: Card,
+    recbar: RecBar,
+    rec: Option<Recording>,
     last: Option<Last>,
+    last_video: Option<LastVideo>,
+    /// The card currently shows a video.
+    card_video: bool,
     icon: HICON,
     taskbar_created: u32,
 }
@@ -92,7 +112,7 @@ pub fn run() {
         log("cannot create message window");
         return;
     };
-    let (Ok(gfx), Ok(overlay), Ok(card)) = (Gfx::new(), Overlay::create(instance), Card::create(instance)) else {
+    let (Ok(gfx), Ok(overlay), Ok(card), Ok(recbar)) = (Gfx::new(), Overlay::create(instance), Card::create(instance), RecBar::create(instance)) else {
         log("cannot create graphics or windows");
         return;
     };
@@ -103,7 +123,21 @@ pub fn run() {
         log("keyboard hook failed");
     }
     APP.with(|a| {
-        *a.borrow_mut() = Some(App { msg, gfx, cfg, cfg_path, overlay, card, last: None, icon, taskbar_created });
+        *a.borrow_mut() = Some(App {
+            msg,
+            gfx,
+            cfg,
+            cfg_path,
+            overlay,
+            card,
+            recbar,
+            rec: None,
+            last: None,
+            last_video: None,
+            card_video: false,
+            icon,
+            taskbar_created,
+        });
     });
     if want_capture {
         unsafe {
@@ -130,6 +164,8 @@ fn register_classes(instance: HINSTANCE) {
             (class_name::MSG, Some(msg_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), WNDCLASS_STYLES(0)),
             (class_name::OVERLAY, Some(overlay_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DBLCLKS),
             (class_name::CARD, Some(card_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DROPSHADOW),
+            (class_name::BAR, Some(bar_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DROPSHADOW),
+            (class_name::OUTLINE, Some(outline_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), WNDCLASS_STYLES(0)),
         ] {
             let wc = WNDCLASSEXW {
                 cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -174,7 +210,34 @@ impl App {
         files::folder_name(&self.current_folder())
     }
 
+    fn panel_state(&self) -> PanelState {
+        PanelState {
+            video: self.cfg.mode == "video",
+            fps_label: match self.cfg.video_fps {
+                0 => "Max fps".into(),
+                n => format!("{n} fps"),
+            },
+            res_label: match Res::parse(&self.cfg.video_res) {
+                Res::Original => "Original".into(),
+                Res::P1080 => "1080p".into(),
+                Res::P720 => "720p".into(),
+            },
+            sound: self.cfg.system_audio,
+            mic: self.cfg.mic,
+        }
+    }
+
+    fn refresh_panel(&mut self) {
+        self.save_config();
+        let st = self.panel_state();
+        self.overlay.set_state(st, &self.gfx);
+    }
+
     fn start_capture(&mut self) {
+        if self.rec.is_some() {
+            self.stop_recording(false);
+            return;
+        }
         if self.overlay.is_active() {
             return;
         }
@@ -191,7 +254,8 @@ impl App {
         };
         let (windows, monitors) = wins::snapshot();
         let label = self.folder_label();
-        if self.overlay.show(&self.gfx, Arc::new(frame), windows, monitors, self.cfg.loupe, label) {
+        let st = self.panel_state();
+        if self.overlay.show(&self.gfx, Arc::new(frame), windows, monitors, self.cfg.loupe, label, st) {
             hook::set_overlay(Some(self.overlay.hwnd));
         }
     }
@@ -208,6 +272,10 @@ impl App {
     }
 
     fn finish(&mut self, rect: Rect) {
+        if self.overlay.is_video() {
+            self.start_recording(rect);
+            return;
+        }
         let Some(full) = self.end_overlay() else { return };
         let frame = Rc::new(full.crop(rect));
         if frame.width() == 0 || frame.height() == 0 {
@@ -226,8 +294,167 @@ impl App {
                 Err(e) => status = format!("Copied, but saving failed: {e}"),
             }
         }
-        self.card.show(&self.gfx, &frame, rect, status, self.cfg.card_seconds);
+        self.card.show(&self.gfx, &frame, rect, status, self.cfg.card_seconds, false);
+        self.card_video = false;
         self.last = Some(Last { frame, rect, saved });
+    }
+
+    fn start_recording(&mut self, rect: Rect) {
+        let full = self.end_overlay();
+        let (monitor, mon_rect) = unsafe {
+            use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect};
+            let m = MonitorFromRect(&super::util::to_win_rect(rect), MONITOR_DEFAULTTONEAREST);
+            let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+            let _ = GetMonitorInfoW(m, &mut info);
+            (m.0 as isize, super::util::to_rect(info.rcMonitor))
+        };
+        let region = videoplan::even_rect(rect.intersect(&mon_rect));
+        if region.width() < 16 || region.height() < 16 {
+            return;
+        }
+        let fps = match self.cfg.video_fps {
+            0 => record::refresh_rate(monitor),
+            n => n,
+        };
+        let plan = videoplan::plan(region.width() as u32, region.height() as u32, fps, Res::parse(&self.cfg.video_res), record::hevc_available());
+        let folder = self.current_folder();
+        let name = crate::config::stamped_name("Video", "mp4", paths::local_stamp(), |n| folder.join(n).exists());
+        let params = record::Params {
+            monitor,
+            monitor_rect: mon_rect,
+            region,
+            plan,
+            path: folder.join(name),
+            system_audio: self.cfg.system_audio,
+            mic: self.cfg.mic,
+        };
+        // Make sure the overlay is gone from the screen before frames flow.
+        unsafe {
+            let _ = DwmFlush();
+        }
+        match Recorder::start(params) {
+            Ok(r) => {
+                self.recbar.show(&self.gfx, region, self.cfg.mic);
+                self.rec = Some(Recording { recorder: r, region });
+            }
+            Err(e) => {
+                log(&format!("cannot start recording: {e}"));
+                if let Some(full) = full {
+                    let frame = full.crop(region);
+                    self.card.show(&self.gfx, &frame, region, format!("Recording failed: {e}"), 0, true);
+                    self.card_video = true;
+                    self.last_video = None;
+                }
+            }
+        }
+    }
+
+    fn stop_recording(&mut self, discard: bool) {
+        let Some(rec) = self.rec.take() else { return };
+        self.recbar.hide();
+        match rec.recorder.finish(discard) {
+            Ok(sum) if !discard => {
+                let secs = sum.seconds.round() as u64;
+                let status = format!(
+                    "{}:{:02} \u{00B7} {}x{} \u{00B7} {} fps{} \u{00B7} {}",
+                    secs / 60,
+                    secs % 60,
+                    sum.plan.out_w,
+                    sum.plan.out_h,
+                    sum.plan.fps,
+                    if sum.plan.codec == videoplan::Codec::Hevc { " HEVC" } else { "" },
+                    file_name(&sum.path)
+                );
+                let thumb = sum.thumb.unwrap_or_else(|| Frame {
+                    rect: Rect::from_xywh(0, 0, 16, 9),
+                    pixels: vec![0; 16 * 9 * 4],
+                });
+                self.card.show(&self.gfx, &thumb, rec.region, status, self.cfg.card_seconds, true);
+                self.card_video = true;
+                self.last_video = Some(LastVideo { path: sum.path, frames: sum.frames, gif_busy: false });
+            }
+            Ok(_) => {}
+            Err(e) => {
+                log(&format!("recording failed: {e}"));
+            }
+        }
+    }
+
+    fn bar_click(&mut self, b: BarButton) {
+        match b {
+            BarButton::Stop => self.stop_recording(false),
+            BarButton::Discard => self.stop_recording(true),
+            BarButton::Pause => {
+                if let Some(r) = &mut self.rec {
+                    let on = !r.recorder.is_paused();
+                    r.recorder.set_paused(on);
+                    self.recbar.paused = on;
+                    self.recbar.invalidate();
+                }
+            }
+            BarButton::Mic => {
+                if let Some(r) = &self.rec {
+                    let on = !r.recorder.mic_muted();
+                    r.recorder.set_mic_muted(on);
+                    self.recbar.muted = on;
+                    self.recbar.invalidate();
+                }
+            }
+        }
+    }
+
+    fn bar_tick(&mut self) {
+        if let Some(r) = &self.rec {
+            self.recbar.seconds = r.recorder.elapsed();
+            self.recbar.invalidate();
+        }
+    }
+
+    fn video_card_click(&mut self, b: Button) {
+        let Some(v) = &mut self.last_video else {
+            if b == Button::Close {
+                self.card.hide();
+            }
+            return;
+        };
+        match b {
+            Button::Copy => {
+                let ok = clipboard::put_file(self.msg, &v.path);
+                CLIP.with(|c| *c.borrow_mut() = None);
+                self.card.set_status(if ok { "Video file copied - paste it anywhere".into() } else { "Could not open the clipboard".into() });
+            }
+            Button::Folder => {
+                let folder = v.path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                files::open_folder(&folder, Some(&v.path));
+                self.card.hide();
+            }
+            Button::Thumb => {
+                files::open_path(&v.path);
+                self.card.hide();
+            }
+            Button::Gif => {
+                if v.gif_busy {
+                    return;
+                }
+                v.gif_busy = true;
+                let (src, frames, notify) = (v.path.clone(), v.frames, self.msg.0 as isize);
+                self.card.set_status("Making GIF...".into());
+                std::thread::spawn(move || export_gif(src, frames, notify));
+            }
+            Button::Close => self.card.hide(),
+            _ => {}
+        }
+    }
+
+    fn move_video_to(&mut self, folder: PathBuf) {
+        let Some(v) = &mut self.last_video else { return };
+        match files::move_into(&v.path, &folder) {
+            Ok(p) => {
+                self.card.set_status(format!("Moved to {}", folder.display()));
+                v.path = p;
+            }
+            Err(e) => self.card.set_status(format!("Moving failed: {e}")),
+        }
     }
 
     fn save_last_to(&mut self, folder: PathBuf) {
@@ -276,9 +503,49 @@ impl App {
                 self.card.hide();
             }
             Button::Close => self.card.hide(),
-            Button::SaveTo | Button::Edit => {}
+            Button::SaveTo | Button::Edit | Button::Gif => {}
         }
     }
+}
+
+/// Decodes the video and writes a GIF next to it; posts progress to `notify`.
+fn export_gif(src: PathBuf, frames: u64, notify: isize) {
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+    }
+    let post = |w: usize| unsafe {
+        let _ = PostMessageW(Some(HWND(notify as *mut _)), WM_APP_GIF, WPARAM(w), LPARAM(0));
+    };
+    let result = (|| -> Result<(), String> {
+        let mut r = mp4read::Reader::open(&src)?;
+        let out = src.with_extension("gif");
+        let file = std::io::BufWriter::new(std::fs::File::create(&out).map_err(|e| e.to_string())?);
+        let mut g = crate::gifenc::GifWriter::new(file, r.w, r.h)?;
+        let mut n = 0u64;
+        let mut last_t = 0i64;
+        let mut last_pct = 0usize;
+        while let Some((t, f)) = r.next() {
+            g.push(t, &f)?;
+            last_t = t;
+            n += 1;
+            let pct = ((n * 100) / frames.max(1)).min(99) as usize;
+            if pct >= last_pct + 5 {
+                last_pct = pct;
+                post(pct);
+            }
+        }
+        let _ = last_t;
+        if n == 0 {
+            return Err("no frames decoded".into());
+        }
+        g.finish(333_333)?;
+        Ok(())
+    })();
+    if let Err(e) = &result {
+        log(&format!("gif export failed: {e}"));
+        let _ = std::fs::remove_file(src.with_extension("gif"));
+    }
+    post(if result.is_ok() { 1000 } else { 1001 });
 }
 
 fn file_name(p: &std::path::Path) -> String {
@@ -339,19 +606,88 @@ fn on_overlay_event(ev: overlay::Event) {
                 choose_folder(owner, at);
             }
         }
+        overlay::Event::Mode(video) => {
+            with_app(|a| {
+                a.cfg.mode = if video { "video" } else { "photo" }.into();
+                a.refresh_panel();
+            });
+        }
+        overlay::Event::ToggleSound => {
+            with_app(|a| {
+                a.cfg.system_audio = !a.cfg.system_audio;
+                a.refresh_panel();
+            });
+        }
+        overlay::Event::ToggleMic => {
+            with_app(|a| {
+                a.cfg.mic = !a.cfg.mic;
+                a.refresh_panel();
+            });
+        }
+        overlay::Event::FpsMenu(at) => {
+            const VALUES: [u32; 4] = [30, 60, 120, 0];
+            let Some((owner, cur)) = with_app(|a| (a.overlay.hwnd, a.cfg.video_fps)) else { return };
+            let checked = VALUES.iter().position(|v| *v == cur).unwrap_or(1);
+            hook::set_overlay(None);
+            let pick = files::choice_menu(owner, (at.x, at.y), &["30 fps", "60 fps", "120 fps", "Max (monitor refresh rate)"], checked);
+            with_app(|a| {
+                hook::set_overlay(Some(a.overlay.hwnd));
+                if let Some(i) = pick {
+                    a.cfg.video_fps = VALUES[i];
+                    a.refresh_panel();
+                }
+            });
+        }
+        overlay::Event::ResMenu(at) => {
+            const VALUES: [Res; 3] = [Res::Original, Res::P1080, Res::P720];
+            let Some((owner, cur)) = with_app(|a| (a.overlay.hwnd, Res::parse(&a.cfg.video_res))) else { return };
+            let checked = VALUES.iter().position(|v| *v == cur).unwrap_or(0);
+            hook::set_overlay(None);
+            let pick = files::choice_menu(owner, (at.x, at.y), &["Original size", "1080p", "720p"], checked);
+            with_app(|a| {
+                hook::set_overlay(Some(a.overlay.hwnd));
+                if let Some(i) = pick {
+                    a.cfg.video_res = VALUES[i].as_str().into();
+                    a.refresh_panel();
+                }
+            });
+        }
     }
 }
 
 fn on_card_event(ev: card::Event) {
     let card::Event::Clicked(b, at) = ev;
+    let Some(video) = with_app(|a| a.card_video) else { return };
     if b == Button::SaveTo {
         let Some(owner) = with_app(|a| a.card.hwnd) else { return };
         if let Some(folder) = choose_folder(owner, at) {
-            with_app(|a| a.save_last_to(folder));
+            with_app(|a| if video { a.move_video_to(folder) } else { a.save_last_to(folder) });
         }
         return;
     }
-    with_app(|a| a.card_click(b));
+    with_app(|a| if video { a.video_card_click(b) } else { a.card_click(b) });
+}
+
+unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if let Some((res, click, tick)) = with_app(|a| a.recbar.handle(msg, wp, lp)) {
+        if tick {
+            with_app(|a| a.bar_tick());
+        }
+        if let Some(b) = click {
+            with_app(|a| a.bar_click(b));
+        }
+        if let Some(res) = res {
+            return res;
+        }
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+}
+
+unsafe extern "system" fn outline_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if let Some(r) = RecBar::outline_proc(hwnd, msg) {
+        return r;
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
 unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -409,6 +745,29 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     _ => {}
                 }
             }
+            return LRESULT(0);
+        }
+        WM_APP_GIF => {
+            let code = wp.0;
+            with_app(|a| {
+                let gif = a.last_video.as_ref().map(|v| v.path.with_extension("gif"));
+                match code {
+                    1000 => {
+                        if let Some(v) = &mut a.last_video {
+                            v.gif_busy = false;
+                        }
+                        let name = gif.as_deref().map(file_name).unwrap_or_default();
+                        a.card.set_status(format!("GIF saved: {name}"));
+                    }
+                    1001 => {
+                        if let Some(v) = &mut a.last_video {
+                            v.gif_busy = false;
+                        }
+                        a.card.set_status("GIF export failed".into());
+                    }
+                    pct => a.card.set_status(format!("Making GIF... {pct}%")),
+                }
+            });
             return LRESULT(0);
         }
         WM_RENDERFORMAT => {

@@ -121,3 +121,29 @@ pub fn put_text(owner: HWND, text: &str) -> bool {
         ok
     }
 }
+
+/// Puts a file on the clipboard (CF_HDROP), so it pastes into Explorer,
+/// Telegram, Discord and the like.
+pub fn put_file(owner: HWND, path: &std::path::Path) -> bool {
+    use windows::Win32::UI::Shell::DROPFILES;
+    let header = DROPFILES {
+        pFiles: size_of::<DROPFILES>() as u32,
+        pt: Default::default(),
+        fNC: false.into(),
+        fWide: true.into(),
+    };
+    let mut wide: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().collect();
+    wide.extend_from_slice(&[0, 0]);
+    let head = unsafe { std::slice::from_raw_parts(&header as *const _ as *const u8, size_of::<DROPFILES>()) };
+    let names = unsafe { std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2) };
+    let Some(g) = global_from(&[head, names]) else { return false };
+    if !open(owner) {
+        return false;
+    }
+    unsafe {
+        let _ = EmptyClipboard();
+        let ok = SetClipboardData(windows::Win32::System::Ole::CF_HDROP.0 as u32, Some(HANDLE(g.0))).is_ok();
+        let _ = CloseClipboard();
+        ok
+    }
+}

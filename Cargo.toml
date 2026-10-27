@@ -11,6 +11,7 @@ name = "RengiSnap"
 path = "src/main.rs"
 
 [dependencies]
+gif = "0.14"
 png = "0.18"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
@@ -22,6 +23,26 @@ windows-numerics = "0.3"
 version = "0.62"
 features = [
   "Win32_Foundation",
+  "Foundation",
+  "Graphics",
+  "Graphics_Capture",
+  "Graphics_DirectX",
+  "Graphics_DirectX_Direct3D11",
+  "Win32_System_WinRT",
+  "Win32_System_WinRT_Graphics",
+  "Win32_System_WinRT_Graphics_Capture",
+  "Win32_System_WinRT_Direct3D11",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Direct3D10",
+  "Win32_Graphics_Dxgi",
+  "Win32_Media",
+  "Win32_Media_MediaFoundation",
+  "Win32_Media_Audio",
+  "Win32_System_Performance",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_Devices_Properties",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Direct2D",

@@ -14,6 +14,9 @@ mod geom;
 #[cfg(windows)]
 #[path = "../image.rs"]
 mod image;
+#[cfg(windows)]
+#[path = "../win/mp4read.rs"]
+mod mp4read;
 
 #[cfg(windows)]
 fn main() {
@@ -48,6 +51,8 @@ mod e2e {
     const PAINT_BUTTON: Rect = Rect::new(60, 60, 180, 100);
     /// BGR of the painted button.
     const BUTTON_BGR: [u8; 3] = [0xD0, 0x78, 0x20];
+    /// Animated window for video tests.
+    const ANIM: Rect = Rect::new(120, 420, 440, 660);
 
     struct Report {
         file: std::fs::File,
@@ -544,6 +549,155 @@ mod e2e {
         }
     }
 
+    static TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    unsafe extern "system" fn anim_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        match msg {
+            WM_TIMER => {
+                TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                unsafe {
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
+                LRESULT(0)
+            }
+            WM_PAINT => unsafe {
+                let t = TICK.load(std::sync::atomic::Ordering::Relaxed);
+                let mut ps = PAINTSTRUCT::default();
+                let dc = BeginPaint(hwnd, &mut ps);
+                let col = COLORREF(((t * 7) & 255) | (((t * 13) & 255) << 8) | (((t * 3 + 80) & 255) << 16));
+                let b = CreateSolidBrush(col);
+                let full = RECT { left: 0, top: 0, right: ANIM.width(), bottom: ANIM.height() };
+                FillRect(dc, &full, b);
+                let _ = DeleteObject(b.into());
+                let x = ((t * 6) % ANIM.width() as u32) as i32;
+                let w = CreateSolidBrush(COLORREF(0x00FFFFFF));
+                FillRect(dc, &RECT { left: x, top: 0, right: x + 20, bottom: ANIM.height() }, w);
+                let _ = DeleteObject(w.into());
+                let _ = EndPaint(hwnd, &ps);
+                LRESULT(0)
+            },
+            _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+        }
+    }
+
+    fn anim_setup(hwnd: HWND, _: HINSTANCE) -> Vec<isize> {
+        unsafe {
+            SetTimer(Some(hwnd), 1, 8, None);
+        }
+        Vec::new()
+    }
+
+    fn pictures() -> PathBuf {
+        PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Pictures").join("Rengi Snap")
+    }
+
+    fn files_with(ext: &str) -> Vec<PathBuf> {
+        let mut v: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(pictures())
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case(ext)))
+                    .map(|p| (std::fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), p))
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v.into_iter().map(|x| x.1).collect()
+    }
+
+    struct VideoInfo {
+        w: u32,
+        h: u32,
+        frames: u32,
+        seconds: f64,
+        distinct: usize,
+        audio: bool,
+        sample: Option<Frame>,
+    }
+
+    fn inspect(path: &Path) -> Result<VideoInfo, String> {
+        let mut r = crate::mp4read::Reader::open(path)?;
+        let (w, h, audio) = (r.w, r.h, r.has_audio());
+        let (mut frames, mut first, mut last) = (0u32, None, 0i64);
+        let mut colors = std::collections::HashSet::new();
+        let mut sample = None;
+        while let Some((t, f)) = r.next() {
+            frames += 1;
+            first.get_or_insert(t);
+            last = t;
+            if let Some(px) = f.pixel(w as i32 / 2, h as i32 / 2) {
+                colors.insert(px.map(|c| c / 16));
+            }
+            if frames == 10 {
+                sample = Some(f);
+            }
+        }
+        let seconds = (last - first.unwrap_or(0)) as f64 / 1e7;
+        Ok(VideoInfo { w, h, frames, seconds, distinct: colors.len(), audio, sample })
+    }
+
+    fn write_config(home: &Path, extra: &str) {
+        let _ = std::fs::write(home.join("config.toml"), format!("mode = \"video\"\n{extra}\n"));
+    }
+
+    fn restart(app: &mut Child, exe: &Path, home: &Path) -> Option<Child> {
+        let _ = app.kill();
+        let _ = app.wait();
+        wait(5000, || find(w!("RengiSnapMsg")).is_none());
+        sleep(300);
+        let c = launch(exe, home).ok()?;
+        wait(10000, || find(w!("RengiSnapMsg")).is_some()).then_some(c)
+    }
+
+    /// Hover-click the region (or drag `drag`), record `ms`, stop with Scroll Lock.
+    fn record(target: Option<(i32, i32)>, drag: Option<((i32, i32), (i32, i32))>, steps: &[i32], ms: u64, dir: &Path, shot: &str) -> Option<PathBuf> {
+        let before = files_with("mp4").len();
+        open_overlay()?;
+        if let Some((a, b)) = drag {
+            drag_to(a, b);
+        } else if let Some(p) = target {
+            move_to(p.0 - 3, p.1);
+            sleep(60);
+            move_to(p.0, p.1);
+            sleep(500);
+            for &st in steps {
+                wheel(st > 0);
+            }
+            sleep(100);
+            click();
+        }
+        if !wait(4000, || visible(w!("RengiSnapBar"))) {
+            close_overlay_if_open();
+            return None;
+        }
+        sleep(ms / 2);
+        screenshot(dir, shot);
+        sleep(ms / 2);
+        tap(VK_SCROLL);
+        if !wait(8000, || files_with("mp4").len() > before && !visible(w!("RengiSnapBar"))) {
+            return None;
+        }
+        sleep(300);
+        files_with("mp4").pop()
+    }
+
+    fn drag_to(a: (i32, i32), b: (i32, i32)) {
+        move_to(a.0, a.1);
+        sleep(60);
+        mouse(MOUSEEVENTF_LEFTDOWN);
+        for i in 1..=8 {
+            move_to(a.0 + (b.0 - a.0) * i / 8, a.1 + (b.1 - a.1) * i / 8);
+        }
+        sleep(40);
+        mouse(MOUSEEVENTF_LEFTUP);
+    }
+
+    fn click_at(x: i32, y: i32) {
+        move_to(x, y);
+        sleep(120);
+        click();
+    }
+
     fn no_children(_: HWND, _: HINSTANCE) -> Vec<isize> {
         Vec::new()
     }
@@ -587,6 +741,7 @@ mod e2e {
         spawn_pattern_window();
         let nest = spawn_window(w!("E2ENested"), NEST, nest_proc, nest_children);
         let paint = spawn_window(w!("E2EPainted"), PAINT, paint_proc, no_children);
+        let anim = spawn_window(w!("E2EAnim"), ANIM, anim_proc, anim_setup);
         rep.check("test windows created", nest.len() == 3 && paint.len() == 1, &format!("nest {} paint {}", nest.len(), paint.len()));
         sleep(500);
         let mut app = match launch(&exe, &home) {
@@ -810,6 +965,213 @@ mod e2e {
             rep.check("H Esc closes the folder menu and then the overlay", wait(2000, || !overlay_visible()), "");
         }
         close_overlay_if_open();
+
+        // V: video.
+        // V1: switch the panel to Video by clicking it, then drag over the animated window at 60 fps.
+        if open_overlay().is_some() {
+            click_at(470, 36);
+            sleep(250);
+            screenshot(&rep.dir, "v0-panel-video");
+            tap(VK_ESCAPE);
+            wait(2000, || !overlay_visible());
+        }
+        let region = Rect::new(ANIM.left + 11, ANIM.top + 11, ANIM.left + 211, ANIM.top + 161);
+        let t_start = Instant::now();
+        let v = record(None, Some(((region.left, region.top), (region.right, region.bottom))), &[], 2000, &rep.dir, "v1-recording");
+        rep.line(&format!("record 60 took {} ms", t_start.elapsed().as_millis()));
+        match v.as_deref().map(inspect) {
+            Some(Ok(i)) => {
+                rep.line(&format!("v1: {}x{} {} frames {:.2}s distinct {} audio {}", i.w, i.h, i.frames, i.seconds, i.distinct, i.audio));
+                rep.check("V1 size is the even-rounded region", (i.w, i.h) == (200, 150), &format!("{}x{}", i.w, i.h));
+                rep.check("V1 duration about 2 s", (1.5..=2.6).contains(&i.seconds), &format!("{:.2}", i.seconds));
+                let fps = i.frames as f64 / i.seconds.max(0.1);
+                rep.check("V1 about 60 fps", (48.0..=66.0).contains(&fps), &format!("{fps:.1}"));
+                rep.check("V1 frames change over time", i.distinct >= 5, &format!("{} distinct", i.distinct));
+                if let Some(f) = &i.sample {
+                    let _ = std::fs::write(rep.dir.join("v1-frame10.png"), f.encode_png());
+                }
+            }
+            Some(Err(e)) => rep.check("V1 video decodes", false, &e),
+            None => rep.check("V1 recording produced a file", false, ""),
+        }
+        rep.check("V1 card shows after stop", wait(2000, || visible(w!("RengiSnapCard"))), "");
+        sleep(200);
+        screenshot(&rep.dir, "v2-video-card");
+
+        // V2: Copy puts the file on the clipboard.
+        if let Some(card) = find(w!("RengiSnapCard")) {
+            let mut r = RECT::default();
+            unsafe {
+                let _ = GetWindowRect(card, &mut r);
+            }
+            let s0 = seq();
+            click_at(r.left + 50, r.bottom - 29);
+            wait(2000, || seq() != s0);
+            let hdrop = unsafe { IsClipboardFormatAvailable(15).is_ok() };
+            rep.check("V2 Copy puts the video file on the clipboard", hdrop, "");
+            // V3: GIF export.
+            let gifs = files_with("gif").len();
+            click_at(r.left + 290, r.bottom - 29);
+            let made = wait(30000, || files_with("gif").len() > gifs) && {
+                sleep(1500);
+                true
+            };
+            rep.check("V3 GIF file appears", made, "");
+            if made {
+                sleep(1500);
+                screenshot(&rep.dir, "v3-gif-done");
+                let gif = files_with("gif").pop().unwrap();
+                let info = std::fs::File::open(&gif).ok().and_then(|f| {
+                    let mut o = gif::DecodeOptions::new();
+                    o.set_color_output(gif::ColorOutput::Indexed);
+                    let mut d = o.read_info(std::io::BufReader::new(f)).ok()?;
+                    let (w, h) = (d.width(), d.height());
+                    let mut n = 0;
+                    let mut cs = 0u32;
+                    while let Ok(Some(fr)) = d.read_next_frame() {
+                        n += 1;
+                        cs += fr.delay as u32;
+                    }
+                    Some((w, h, n, cs))
+                });
+                rep.check("V3 GIF decodes with many frames", info.is_some_and(|i| i.2 >= 20 && i.0 == 200), &format!("{info:?}"));
+            }
+        }
+        close_overlay_if_open();
+
+        // V4: 120 fps.
+        write_config(&home, "video_fps = 120");
+        match restart(&mut app, &exe, &home) {
+            Some(c) => app = c,
+            None => rep.check("V4 app restarts", false, ""),
+        }
+        sleep(500);
+        let v = record(None, Some(((region.left, region.top), (region.right, region.bottom))), &[], 2000, &rep.dir, "v4-recording-120");
+        match v.as_deref().map(inspect) {
+            Some(Ok(i)) => {
+                let fps = i.frames as f64 / i.seconds.max(0.1);
+                rep.line(&format!("v4: {}x{} {} frames {:.2}s = {fps:.1} fps", i.w, i.h, i.frames, i.seconds));
+                rep.check("V4 about 120 fps", (96.0..=130.0).contains(&fps), &format!("{fps:.1}"));
+            }
+            Some(Err(e)) => rep.check("V4 video decodes", false, &e),
+            None => rep.check("V4 recording produced a file", false, ""),
+        }
+        close_overlay_if_open();
+        if let Some(c) = find(w!("RengiSnapCard")) {
+            unsafe {
+                let _ = ShowWindow(c, SW_HIDE);
+            }
+        }
+
+        // V5: full monitor at 720p; the bar sits inside the region but must not be in the video.
+        write_config(&home, "video_res = \"720p\"");
+        if let Some(c) = restart(&mut app, &exe, &home) {
+            app = c;
+        }
+        sleep(500);
+        let before = files_with("mp4").len();
+        let mut bar_rect = None;
+        if open_overlay().is_some() {
+            move_to(PAT.left + 50, PAT.top + 50);
+            sleep(400);
+            for _ in 0..10 {
+                wheel(true);
+            }
+            sleep(100);
+            click();
+            if wait(4000, || visible(w!("RengiSnapBar"))) {
+                sleep(900);
+                bar_rect = find(w!("RengiSnapBar")).map(|h| window_rect(h.0 as isize));
+                screenshot(&rep.dir, "v5-fullscreen-recording");
+                sleep(600);
+                tap(VK_SCROLL);
+                wait(8000, || files_with("mp4").len() > before);
+                sleep(400);
+            }
+        }
+        let v = (files_with("mp4").len() > before).then(|| files_with("mp4").pop()).flatten();
+        match (v.as_deref().map(inspect), bar_rect) {
+            (Some(Ok(i)), Some(bar)) => {
+                rep.line(&format!("v5: {}x{} {} frames, bar at {bar:?}", i.w, i.h, i.frames));
+                rep.check("V5 720p option gives 960x720", (i.w, i.h) == (960, 720), &format!("{}x{}", i.w, i.h));
+                if let Some(f) = &i.sample {
+                    let _ = std::fs::write(rep.dir.join("v5-frame10.png"), f.encode_png());
+                    // Count bar-coloured pixels (#1E1E20) where the bar was, scaled to 960/1024.
+                    let sc = 960.0 / 1024.0;
+                    let (mut dark, mut total) = (0, 0);
+                    for y in (bar.top as f64 * sc) as i32..(bar.bottom as f64 * sc) as i32 {
+                        for x in (bar.left as f64 * sc) as i32..(bar.right as f64 * sc) as i32 {
+                            if let Some(p) = f.pixel(x, y) {
+                                total += 1;
+                                if p.iter().all(|&c| (20..=45).contains(&c)) {
+                                    dark += 1;
+                                }
+                            }
+                        }
+                    }
+                    let frac = dark as f64 / total.max(1) as f64;
+                    rep.check("V5 control bar is not in the video", frac < 0.3, &format!("{:.0}% bar-coloured", frac * 100.0));
+                }
+            }
+            (Some(Err(e)), _) => rep.check("V5 video decodes", false, &e),
+            _ => rep.check("V5 full-monitor recording with the bar", false, &format!("bar {bar_rect:?}")),
+        }
+        if let Some(c) = find(w!("RengiSnapCard")) {
+            unsafe {
+                let _ = ShowWindow(c, SW_HIDE);
+            }
+        }
+
+        // V6: Discard leaves no file; V7: pause is not counted.
+        write_config(&home, "");
+        if let Some(c) = restart(&mut app, &exe, &home) {
+            app = c;
+        }
+        sleep(500);
+        let before = files_with("mp4").len();
+        if open_overlay().is_some() {
+            drag_to((region.left, region.top), (region.right, region.bottom));
+            if wait(4000, || visible(w!("RengiSnapBar"))) {
+                sleep(600);
+                let bar = window_rect(find(w!("RengiSnapBar")).unwrap().0 as isize);
+                screenshot(&rep.dir, "v6-bar");
+                click_at(bar.left + 6 + 92 + 2 * 34 + 17, bar.top + bar.height() / 2);
+                wait(5000, || !visible(w!("RengiSnapBar")));
+                sleep(800);
+                rep.check("V6 Discard leaves no file", files_with("mp4").len() == before, "");
+            } else {
+                rep.check("V6 recording starts", false, "");
+            }
+        }
+        if open_overlay().is_some() {
+            drag_to((region.left, region.top), (region.right, region.bottom));
+            if wait(4000, || visible(w!("RengiSnapBar"))) {
+                let bar = window_rect(find(w!("RengiSnapBar")).unwrap().0 as isize);
+                let pause = (bar.left + 6 + 92 + 17, bar.top + bar.height() / 2);
+                sleep(1000);
+                click_at(pause.0, pause.1);
+                sleep(1500);
+                click_at(pause.0, pause.1);
+                sleep(1000);
+                tap(VK_SCROLL);
+                wait(8000, || !visible(w!("RengiSnapBar")));
+                sleep(500);
+                match files_with("mp4").pop().as_deref().map(inspect) {
+                    Some(Ok(i)) => rep.check("V7 paused time is not recorded", (1.6..=2.8).contains(&i.seconds), &format!("{:.2}s of ~2.3s", i.seconds)),
+                    _ => rep.check("V7 pause recording decodes", false, ""),
+                }
+            }
+        }
+        if let Some(c) = find(w!("RengiSnapCard")) {
+            unsafe {
+                let _ = ShowWindow(c, SW_HIDE);
+            }
+        }
+        for h in anim.iter() {
+            unsafe {
+                let _ = ShowWindow(HWND(*h as *mut _), SW_HIDE);
+            }
+        }
 
         // K: a real app (Explorer), screenshots only.
         for h in nest.iter().take(1).chain(paint.iter()) {

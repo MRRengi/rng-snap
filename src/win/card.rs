@@ -28,6 +28,7 @@ pub enum Button {
     SaveTo,
     Folder,
     Edit,
+    Gif,
     Close,
     Thumb,
 }
@@ -109,7 +110,7 @@ impl Card {
     }
 
     /// `anchor`: desktop rect of the capture; the card goes to that monitor's corner.
-    pub fn show(&mut self, gfx: &Gfx, frame: &Frame, anchor: Rect, status: String, seconds: u32) {
+    pub fn show(&mut self, gfx: &Gfx, frame: &Frame, anchor: Rect, status: String, seconds: u32, video: bool) {
         let (work, scale) = unsafe {
             let c = anchor.left + anchor.width() / 2;
             let m = MonitorFromPoint(POINT { x: c, y: anchor.top + anchor.height() / 2 }, MONITOR_DEFAULTTONEAREST);
@@ -140,8 +141,13 @@ impl Card {
         self.thumb = Rect::new(pad, pad, w - pad, pad + th);
         self.buttons.clear();
         let row_top = pad + th + px(4.0) + status_h;
-        let bw = inner_w / 5;
-        for (i, b) in [Button::Copy, Button::Save, Button::SaveTo, Button::Folder, Button::Edit].into_iter().enumerate() {
+        let row: Vec<Button> = if video {
+            vec![Button::Copy, Button::SaveTo, Button::Folder, Button::Gif]
+        } else {
+            vec![Button::Copy, Button::Save, Button::SaveTo, Button::Folder, Button::Edit]
+        };
+        let bw = inner_w / row.len() as i32;
+        for (i, b) in row.into_iter().enumerate() {
             let x = pad + bw * i as i32;
             self.buttons.push((b, Rect::new(x, row_top, x + bw, row_top + btn_h)));
         }
@@ -348,6 +354,7 @@ impl Card {
                     Button::SaveTo => ("\u{E792}", "Save to"),
                     Button::Folder => ("\u{E838}", "Folder"),
                     Button::Edit => ("\u{E70F}", "Edit"),
+                    Button::Gif => ("\u{E8B9}", "GIF"),
                     _ => continue,
                 };
                 let lr = Self::f(*r);

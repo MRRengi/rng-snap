@@ -28,8 +28,34 @@ const PANEL_BG: u32 = 0x1E1E20;
 pub enum PanelItem {
     Photo,
     Video,
+    Fps,
+    Res,
+    Sound,
+    Mic,
     Folder,
     Close,
+}
+
+impl PanelItem {
+    /// Items in the same group sit together; a separator goes between groups.
+    fn group(&self) -> u8 {
+        match self {
+            PanelItem::Photo | PanelItem::Video => 0,
+            PanelItem::Fps | PanelItem::Res | PanelItem::Sound | PanelItem::Mic => 1,
+            PanelItem::Folder => 2,
+            PanelItem::Close => 3,
+        }
+    }
+}
+
+/// What the panel shows; owned by the app.
+#[derive(Clone, Debug, Default)]
+pub struct PanelState {
+    pub video: bool,
+    pub fps_label: String,
+    pub res_label: String,
+    pub sound: bool,
+    pub mic: bool,
 }
 
 pub enum Event {
@@ -38,6 +64,11 @@ pub enum Event {
     CopyColor(String),
     /// Open the folder dropdown at this desktop point.
     FolderMenu(Point),
+    Mode(bool),
+    FpsMenu(Point),
+    ResMenu(Point),
+    ToggleSound,
+    ToggleMic,
 }
 
 struct Fonts {
@@ -68,6 +99,7 @@ pub struct Overlay {
     fonts: Option<(f32, Fonts)>,
     loupe: bool,
     folder_label: String,
+    state: PanelState,
     panel: Vec<(PanelItem, Rect)>,
     panel_rect: Rect,
     panel_hover: Option<PanelItem>,
@@ -121,6 +153,7 @@ impl Overlay {
             fonts: None,
             loupe: true,
             folder_label: String::new(),
+            state: PanelState::default(),
             panel: Vec::new(),
             panel_rect: Rect::default(),
             panel_hover: None,
@@ -136,13 +169,23 @@ impl Overlay {
         self.sel.is_some()
     }
 
+    pub fn set_state(&mut self, state: PanelState, gfx: &Gfx) {
+        self.state = state;
+        self.layout_panel(gfx);
+        self.invalidate();
+    }
+
+    pub fn is_video(&self) -> bool {
+        self.state.video
+    }
+
     pub fn set_folder_label(&mut self, label: String, gfx: &Gfx) {
         self.folder_label = label;
         self.layout_panel(gfx);
         self.invalidate();
     }
 
-    pub fn show(&mut self, gfx: &Gfx, frame: Arc<Frame>, windows: Vec<(isize, Rect)>, monitors: Vec<Rect>, loupe: bool, folder_label: String) -> bool {
+    pub fn show(&mut self, gfx: &Gfx, frame: Arc<Frame>, windows: Vec<(isize, Rect)>, monitors: Vec<Rect>, loupe: bool, folder_label: String, state: PanelState) -> bool {
         let vd = frame.rect;
         let (w, h) = (vd.width() as u32, vd.height() as u32);
         if self.rt.is_none() || self.rt_size != (w, h) {
@@ -166,6 +209,7 @@ impl Overlay {
         self.frame = Some(frame);
         self.loupe = loupe;
         self.folder_label = folder_label;
+        self.state = state;
         let tol = (6.0 * scale).round() as i32;
         self.windows = windows.iter().map(|(h, r)| (*h, r.intersect(&vd))).filter(|(_, r)| !r.is_empty()).collect();
         let mut sel = Selection::new(vd, self.windows.iter().map(|w| w.1).collect(), monitors, tol);
@@ -237,26 +281,33 @@ impl Overlay {
         let pad = (6.0 * s).round() as i32;
         let icon_w = (18.0 * s).round() as i32;
         let gap = (6.0 * s).round() as i32;
-        let seg = |label: &str| -> i32 { (12.0 * s) as i32 * 2 + icon_w + gap + gfx.measure(&f.ui, label).ceil() as i32 };
-        let folder_w = (12.0 * s) as i32 * 2 + icon_w + gap * 2 + gfx.measure(&f.ui, &self.folder_label).ceil() as i32 + (12.0 * s) as i32;
-        let close_w = h - pad * 2;
+        let side = (12.0 * s) as i32;
+        let text_w = |label: &str| gfx.measure(&f.ui, label).ceil() as i32;
+        let seg = |label: &str| side * 2 + icon_w + gap + text_w(label);
+        let drop = |label: &str| side * 2 + icon_w + gap * 2 + text_w(label) + side;
+        let square = h - pad * 2;
+        let mut items = vec![(PanelItem::Photo, seg("Photo")), (PanelItem::Video, seg("Video"))];
+        if self.state.video {
+            let fps_w = side * 2 + text_w(&self.state.fps_label) + gap + side;
+            let res_w = side * 2 + text_w(&self.state.res_label) + gap + side;
+            items.extend([(PanelItem::Fps, fps_w), (PanelItem::Res, res_w), (PanelItem::Sound, square), (PanelItem::Mic, square)]);
+        }
+        items.push((PanelItem::Folder, drop(&self.folder_label)));
+        items.push((PanelItem::Close, square));
         let sep = (13.0 * s).round() as i32;
-        let widths = [
-            (PanelItem::Photo, seg("Photo")),
-            (PanelItem::Video, seg("Video")),
-            (PanelItem::Folder, folder_w),
-            (PanelItem::Close, close_w),
-        ];
-        let total: i32 = pad * 2 + widths.iter().map(|w| w.1).sum::<i32>() + sep * 2;
+        let groups = items.windows(2).filter(|w| w[0].0.group() != w[1].0.group()).count() as i32;
+        let total: i32 = pad * 2 + items.iter().map(|w| w.1).sum::<i32>() + sep * groups;
         let left = self.monitor.left + (self.monitor.width() - total) / 2;
         let top = self.monitor.top + (16.0 * s).round() as i32;
         self.panel_rect = Rect::new(left, top, left + total, top + h);
         let mut x = left + pad;
-        for (i, (item, w)) in widths.iter().enumerate() {
-            if i == 2 || i == 3 {
+        let mut prev: Option<u8> = None;
+        for (item, w) in items {
+            if prev.is_some_and(|g| g != item.group()) {
                 x += sep;
             }
-            self.panel.push((*item, Rect::new(x, top + pad, x + w, top + h - pad)));
+            prev = Some(item.group());
+            self.panel.push((item, Rect::new(x, top + pad, x + w, top + h - pad)));
             x += w;
         }
     }
@@ -424,13 +475,19 @@ impl Overlay {
     }
 
     fn panel_click(&mut self, item: PanelItem) -> Option<Event> {
+        let below = |me: &Self, it: PanelItem| -> Option<Point> {
+            let r = me.panel.iter().find(|(i, _)| *i == it).map(|(_, r)| *r)?;
+            Some(Point::new(r.left, me.panel_rect.bottom + (4.0 * me.scale) as i32))
+        };
         match item {
-            PanelItem::Photo | PanelItem::Video => None,
+            PanelItem::Photo => (self.state.video).then_some(Event::Mode(false)),
+            PanelItem::Video => (!self.state.video).then_some(Event::Mode(true)),
             PanelItem::Close => Some(Event::Cancel),
-            PanelItem::Folder => {
-                let r = self.panel.iter().find(|(i, _)| *i == PanelItem::Folder).map(|(_, r)| *r)?;
-                Some(Event::FolderMenu(Point::new(r.left, self.panel_rect.bottom + (4.0 * self.scale) as i32)))
-            }
+            PanelItem::Folder => below(self, item).map(Event::FolderMenu),
+            PanelItem::Fps => below(self, item).map(Event::FpsMenu),
+            PanelItem::Res => below(self, item).map(Event::ResMenu),
+            PanelItem::Sound => Some(Event::ToggleSound),
+            PanelItem::Mic => Some(Event::ToggleMic),
         }
     }
 
@@ -441,7 +498,7 @@ impl Overlay {
         }
         let p = Point::new(cur.x, cur.y);
         let id = if self.panel_rect.contains(p) {
-            if matches!(self.panel_item_at(p), Some(PanelItem::Video) | None) { IDC_ARROW } else { IDC_HAND }
+            if self.panel_item_at(p).is_none() { IDC_ARROW } else { IDC_HAND }
         } else {
             match self.sel.as_ref().and_then(|s| s.hit(p)) {
                 Some(e) if (e.left && e.top) || (e.right && e.bottom) => IDC_SIZENWSE,
@@ -530,7 +587,6 @@ impl Overlay {
                 }
             }
             self.draw_panel(rt1, fonts);
-            self.draw_video_hint(rt1, fonts);
             if self.loupe && !self.panel_rect.contains(pos) {
                 self.draw_loupe(rt1, &bmp, fonts, pos, view.frame);
             }
@@ -559,14 +615,15 @@ impl Overlay {
     unsafe fn draw_panel(&self, rt: &ID2D1RenderTarget, fonts: &Fonts) {
         let s = self.scale;
         let pr = self.local(self.panel_rect);
-        let (Ok(bg), Ok(border), Ok(fg), Ok(dimfg), Ok(sel_bg), Ok(hover_bg), Ok(sep)) = (
+        let (Ok(bg), Ok(border), Ok(fg), Ok(dimfg), Ok(sel_bg), Ok(hover_bg), Ok(sep), Ok(on)) = (
             d2d::brush(rt, rgba(PANEL_BG, 0.97)),
             d2d::brush(rt, rgba(0xFFFFFF, 0.10)),
             d2d::brush(rt, rgba(0xFFFFFF, 0.95)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.35)),
+            d2d::brush(rt, rgba(0xFFFFFF, 0.40)),
             d2d::brush(rt, rgba(0xFFFFFF, 0.14)),
             d2d::brush(rt, rgba(0xFFFFFF, 0.07)),
             d2d::brush(rt, rgba(0xFFFFFF, 0.12)),
+            d2d::brush(rt, rgba(ACCENT, 1.0)),
         ) else {
             return;
         };
@@ -577,18 +634,23 @@ impl Overlay {
         }
         let icon_w = 18.0 * s;
         let gap = 6.0 * s;
-        for (i, (item, r)) in self.panel.iter().enumerate() {
+        let mut prev: Option<u8> = None;
+        for (item, r) in &self.panel {
             let lr = self.local(*r);
-            if i == 2 || i == 3 {
+            if prev.is_some_and(|g| g != item.group()) {
                 let x = lr.left - 6.5 * s;
                 unsafe {
                     rt.FillRectangle(&rect_f(x, lr.top + 6.0 * s, x + 1.0, lr.bottom - 6.0 * s), &sep);
                 }
             }
-            let disabled = *item == PanelItem::Video;
-            let selected = *item == PanelItem::Photo;
+            prev = Some(item.group());
+            let selected = match item {
+                PanelItem::Photo => !self.state.video,
+                PanelItem::Video => self.state.video,
+                _ => false,
+            };
             let pressed = self.panel_press == Some(*item);
-            let hovered = self.panel_hover == Some(*item) && !disabled;
+            let hovered = self.panel_hover == Some(*item);
             let rr = d2d::round_rect(lr, 7.0 * s);
             unsafe {
                 if selected || pressed {
@@ -597,47 +659,46 @@ impl Overlay {
                     rt.FillRoundedRectangle(&rr, &hover_bg);
                 }
             }
-            let color = if disabled { &dimfg } else { &fg };
+            match item {
+                PanelItem::Sound | PanelItem::Mic => {
+                    let active = if *item == PanelItem::Sound { self.state.sound } else { self.state.mic };
+                    let glyph = match (item, active) {
+                        (PanelItem::Sound, true) => "\u{E767}",
+                        (PanelItem::Sound, false) => "\u{E74F}",
+                        (_, true) => "\u{E720}",
+                        _ => "\u{EC54}",
+                    };
+                    d2d::draw_text(rt, &fonts.icon, glyph, lr, if active { &on } else { &dimfg });
+                    continue;
+                }
+                PanelItem::Close => {
+                    d2d::draw_text(rt, &fonts.icon, "\u{E711}", lr, &fg);
+                    continue;
+                }
+                PanelItem::Fps | PanelItem::Res => {
+                    let label = if *item == PanelItem::Fps { &self.state.fps_label } else { &self.state.res_label };
+                    let ty = (lr.top + lr.bottom) / 2.0 - 10.0 * s;
+                    d2d::draw_text(rt, &fonts.ui, label, rect_f(lr.left + 12.0 * s, ty, lr.right, ty + 22.0 * s), &fg);
+                    let cx = lr.right - 18.0 * s;
+                    d2d::draw_text(rt, &fonts.small_icon(), "\u{E70D}", rect_f(cx, lr.top, cx + 12.0 * s, lr.bottom), &fg);
+                    continue;
+                }
+                _ => {}
+            }
             let (glyph, label) = match item {
                 PanelItem::Photo => ("\u{E722}", "Photo"),
                 PanelItem::Video => ("\u{E714}", "Video"),
-                PanelItem::Folder => ("\u{E8B7}", self.folder_label.as_str()),
-                PanelItem::Close => ("\u{E711}", ""),
+                _ => ("\u{E8B7}", self.folder_label.as_str()),
             };
-            if label.is_empty() {
-                d2d::draw_text(rt, &fonts.icon, glyph, lr, color);
-                continue;
-            }
             let x0 = lr.left + 12.0 * s;
-            d2d::draw_text(rt, &fonts.icon, glyph, rect_f(x0, lr.top, x0 + icon_w, lr.bottom), color);
+            d2d::draw_text(rt, &fonts.icon, glyph, rect_f(x0, lr.top, x0 + icon_w, lr.bottom), &fg);
             let tx = x0 + icon_w + gap;
             let ty = (lr.top + lr.bottom) / 2.0 - 10.0 * s;
-            d2d::draw_text(rt, &fonts.ui, label, rect_f(tx, ty, lr.right, ty + 22.0 * s), color);
+            d2d::draw_text(rt, &fonts.ui, label, rect_f(tx, ty, lr.right, ty + 22.0 * s), &fg);
             if *item == PanelItem::Folder {
                 let cx = lr.right - 18.0 * s;
-                d2d::draw_text(rt, &fonts.small_icon(), "\u{E70D}", rect_f(cx, lr.top, cx + 12.0 * s, lr.bottom), color);
+                d2d::draw_text(rt, &fonts.small_icon(), "\u{E70D}", rect_f(cx, lr.top, cx + 12.0 * s, lr.bottom), &fg);
             }
-        }
-    }
-
-    unsafe fn draw_video_hint(&self, rt: &ID2D1RenderTarget, fonts: &Fonts) {
-        if self.panel_hover != Some(PanelItem::Video) {
-            return;
-        }
-        let Some((_, r)) = self.panel.iter().find(|(i, _)| *i == PanelItem::Video) else { return };
-        let s = self.scale;
-        let text = "Video recording comes in the next update";
-        let w = 262.0 * s;
-        let lr = self.local(*r);
-        let pr = self.local(self.panel_rect);
-        let x = ((lr.left + lr.right) / 2.0 - w / 2.0).max(pr.left);
-        let top = pr.bottom + 6.0 * s;
-        let box_ = rect_f(x, top, x + w, top + 28.0 * s);
-        if let (Ok(bg), Ok(fg)) = (d2d::brush(rt, rgba(PANEL_BG, 0.97)), d2d::brush(rt, rgba(0xFFFFFF, 0.85))) {
-            unsafe {
-                rt.FillRoundedRectangle(&d2d::round_rect(box_, 6.0 * s), &bg);
-            }
-            d2d::draw_text(rt, &fonts.small, text, rect_f(box_.left + 10.0 * s, box_.top + 5.0 * s, box_.right, box_.bottom), &fg);
         }
     }
 
