@@ -1,0 +1,8 @@
+screen 1920x1080
+window R { l: 167, t: 64, r: 1753, b: 977 } viewport R { l: 168, t: 95, r: 1752, b: 976 }
+capture: gdigrab
+card R { l: 1564, t: 803, r: 1904, b: 1064 }
+editor client R { l: 152, t: 112, r: 1768, b: 991 } zoom 0.892 origin (105,76)
+video card R { l: 1564, t: 807, r: 1904, b: 1064 }
+gif made: true
+ffmpeg stopped: true

@@ -1,0 +1,45 @@
+0 mark flash
+1767 caption Press Scroll Lock. The screen freezes.
+2976 key Scroll Lock
+4042 caption It finds every element under the cursor
+12317 caption Mouse wheel picks the level
+12317 key wheel-up
+13117 key wheel-up
+14280 key wheel-down
+14984 key wheel-down
+15886 caption Hold Ctrl and mark it up right there
+17091 key Ctrl
+17362 down 
+18657 up 
+19820 key R
+20741 down 
+21538 up 
+22038 key A
+22952 down 
+23700 up 
+24200 key N
+25386 click 
+26750 click 
+27888 key Enter
+27929 caption Copied to the clipboard
+29329 caption Need more? Open the editor
+30470 click 
+31914 caption Blur anything private
+31914 key B
+32829 down 
+33704 up 
+34408 caption Add a note
+34408 key T
+35694 click 
+38881 caption Every change is already in your clipboard
+42612 caption Video too: up to 120+ fps
+42612 key Scroll Lock
+44325 click 
+47539 click 
+47611 mark recording
+53545 key Scroll Lock
+53597 caption Saved as MP4
+54861 caption One click to GIF
+56006 click 
+71607 mark gif-done
+74106 mark end
