@@ -401,8 +401,9 @@ class Renderer:
         # Caption: current one, fade in/out.
         cur = None
         for i, (t, text) in enumerate(self.caps):
-            nxt = self.caps[i + 1][0] if i + 1 < len(self.caps) else t + 4000
-            end = min(nxt, t + 4200)
+            last = i + 1 == len(self.caps)
+            nxt = self.caps[i + 1][0] if not last else self.tk.end
+            end = nxt if last else min(nxt, t + 4200)
             if t - 100 <= ms < end:
                 cur = (t, end, text)
         if cur:
