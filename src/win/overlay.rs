@@ -39,7 +39,6 @@ pub enum Event {
 
 struct Fonts {
     ui: IDWriteTextFormat,
-    ui_bold: IDWriteTextFormat,
     small: IDWriteTextFormat,
     mono: IDWriteTextFormat,
     icon: IDWriteTextFormat,
@@ -464,6 +463,7 @@ impl Overlay {
                 }
             }
             self.draw_panel(rt1, fonts);
+            self.draw_video_hint(rt1, fonts);
             if self.loupe && !self.panel_rect.contains(pos) {
                 self.draw_loupe(rt1, &bmp, fonts, pos, view.frame);
             }
@@ -553,12 +553,33 @@ impl Overlay {
         }
     }
 
+    unsafe fn draw_video_hint(&self, rt: &ID2D1RenderTarget, fonts: &Fonts) {
+        if self.panel_hover != Some(PanelItem::Video) {
+            return;
+        }
+        let Some((_, r)) = self.panel.iter().find(|(i, _)| *i == PanelItem::Video) else { return };
+        let s = self.scale;
+        let text = "Video recording comes in the next update";
+        let w = 262.0 * s;
+        let lr = self.local(*r);
+        let pr = self.local(self.panel_rect);
+        let x = ((lr.left + lr.right) / 2.0 - w / 2.0).max(pr.left);
+        let top = pr.bottom + 6.0 * s;
+        let box_ = rect_f(x, top, x + w, top + 28.0 * s);
+        if let (Ok(bg), Ok(fg)) = (d2d::brush(rt, rgba(PANEL_BG, 0.97)), d2d::brush(rt, rgba(0xFFFFFF, 0.85))) {
+            unsafe {
+                rt.FillRoundedRectangle(&d2d::round_rect(box_, 6.0 * s), &bg);
+            }
+            d2d::draw_text(rt, &fonts.small, text, rect_f(box_.left + 10.0 * s, box_.top + 5.0 * s, box_.right, box_.bottom), &fg);
+        }
+    }
+
     unsafe fn draw_loupe(&self, rt: &ID2D1RenderTarget, bmp: &ID2D1Bitmap, fonts: &Fonts, pos: Point, frame: Option<Rect>) {
         let s = self.scale;
-        const CELLS: i32 = 15;
+        const CELLS: i32 = 17;
         let zoom = (8.0 * s).round();
         let box_px = CELLS as f32 * zoom;
-        let info_h = 58.0 * s;
+        let info_h = 74.0 * s;
         let off = 22.0 * s;
         let cursor = Point::new(pos.x - self.vd.left, pos.y - self.vd.top);
         let mon = self.local(self.monitor);
@@ -620,9 +641,12 @@ impl Overlay {
                     rt.DrawRectangle(&r, &border, 1.0, None);
                 }
             }
-            d2d::draw_text(rt, &fonts.mono, &format!("{hex}  C copies"), rect_f(tx + sw + 6.0 * s, ty, dst.right, ty + line), &fg);
+            d2d::draw_text(rt, &fonts.mono, &hex, rect_f(tx + sw + 6.0 * s, ty, dst.right, ty + line), &fg);
         }
-        let _ = &fonts.ui_bold;
+        ty += line;
+        if let Ok(hint) = d2d::brush(rt, rgba(0xFFFFFF, 0.38)) {
+            d2d::draw_text(rt, &fonts.small, "Press C to copy", rect_f(tx, ty, dst.right, ty + line), &hint);
+        }
     }
 }
 
@@ -636,7 +660,6 @@ fn make_fonts(gfx: &Gfx, s: f32) -> Option<Fonts> {
     let mono = gfx.text_format(&windows::core::HSTRING::from("Consolas"), 12.5 * s, false).ok()?;
     Some(Fonts {
         ui: gfx.ui_font(14.0 * s, false).ok()?,
-        ui_bold: gfx.ui_font(14.0 * s, true).ok()?,
         small: gfx.ui_font(12.0 * s, false).ok()?,
         mono,
         icon: gfx.icon_font(15.0 * s).ok()?,

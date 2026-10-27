@@ -530,6 +530,61 @@ mod e2e {
             Err(e) => rep.check("F second launch", false, &e.to_string()),
         }
 
+        // G: the card's Save button writes a PNG; the card then hides by itself.
+        let pics = PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Pictures").join("Rengi Snap");
+        let count_png = || std::fs::read_dir(&pics).map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "png")).count()).unwrap_or(0);
+        let before = count_png();
+        let s0 = seq();
+        if open_overlay().is_some() {
+            move_to(PAT.left + 180, PAT.top + 150);
+            sleep(150);
+            mouse(MOUSEEVENTF_LEFTDOWN);
+            sleep(40);
+            mouse(MOUSEEVENTF_LEFTUP);
+            wait(5000, || seq() != s0);
+            if wait(2000, || visible(w!("RengiSnapCard"))) {
+                let mut r = RECT::default();
+                unsafe {
+                    let _ = GetWindowRect(find(w!("RengiSnapCard")).unwrap(), &mut r);
+                }
+                move_to(r.left + 106, r.bottom - 29);
+                sleep(150);
+                mouse(MOUSEEVENTF_LEFTDOWN);
+                sleep(40);
+                mouse(MOUSEEVENTF_LEFTUP);
+                let saved = wait(4000, || count_png() == before + 1);
+                rep.check("G card Save writes a PNG", saved, &format!("{} -> {} in {}", before, count_png(), pics.display()));
+                sleep(200);
+                screenshot(&rep.dir, "g1-card-saved");
+                move_to(10, 10);
+                let hid = wait(9000, || !visible(w!("RengiSnapCard")));
+                rep.check("G card hides itself after the mouse leaves", hid, "");
+            } else {
+                rep.check("G card shows", false, "");
+            }
+        } else {
+            rep.check("G hotkey opens overlay", false, "");
+        }
+
+        // H: panel visuals (video hint, folder dropdown) for review.
+        if open_overlay().is_some() {
+            move_to(470, 36);
+            sleep(200);
+            screenshot(&rep.dir, "h1-video-hint");
+            move_to(585, 36);
+            sleep(100);
+            mouse(MOUSEEVENTF_LEFTDOWN);
+            sleep(40);
+            mouse(MOUSEEVENTF_LEFTUP);
+            sleep(500);
+            screenshot(&rep.dir, "h2-folder-menu");
+            tap(VK_ESCAPE);
+            sleep(300);
+            tap(VK_ESCAPE);
+            rep.check("H Esc closes the folder menu and then the overlay", wait(2000, || !overlay_visible()), "");
+        }
+        close_overlay_if_open();
+
         let scroll_after = unsafe { GetKeyState(VK_SCROLL.0 as i32) } & 1;
         rep.check("Scroll Lock state never toggled", scroll_before == scroll_after, "");
         rep.check("app still running", matches!(app.try_wait(), Ok(None)), "");
