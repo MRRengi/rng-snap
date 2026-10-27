@@ -1,0 +1,23 @@
+{
+  "voice_id": "nPczCjzI2devNBz1zQrb",
+  "model_id": "eleven_multilingual_v2",
+  "settings": {"stability": 0.55, "similarity_boost": 0.8, "style": 0.15, "use_speaker_boost": true},
+  "music_prompt": "Calm minimal electronic background for a software product demo. Soft warm synth pads, gentle plucked arpeggio, light airy percussion, steady 100 BPM, modern and clean, no vocals, no big drops, even energy throughout, ends softly.",
+  "music_ms": 56000,
+  "lines": [
+    {"id": "title", "text": "Meet Snap. Free and open source."},
+    {"id": "freeze", "text": "Hit Scroll Lock, and the screen freezes."},
+    {"id": "finds", "text": "Snap sees every element under your cursor."},
+    {"id": "wheel", "text": "Scroll to go a level up, or down."},
+    {"id": "ctrl", "text": "Hold Control, and mark it up right there."},
+    {"id": "copied", "text": "Press Enter. It's already in your clipboard."},
+    {"id": "editor", "text": "Need more? Open the editor."},
+    {"id": "blur", "text": "Blur anything private."},
+    {"id": "note", "text": "Add a note."},
+    {"id": "auto", "text": "Every change is copied automatically."},
+    {"id": "video", "text": "Video too. Up to a hundred and twenty frames per second."},
+    {"id": "mp4", "text": "Saved straight to MP4."},
+    {"id": "gif", "text": "And one click turns it into a GIF."},
+    {"id": "end", "text": "Snap. Free, on GitHub."}
+  ]
+}

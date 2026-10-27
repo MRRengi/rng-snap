@@ -1,0 +1,28 @@
+name: voice
+on:
+  push:
+    branches: [voice]
+
+permissions:
+  contents: write
+
+jobs:
+  voice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: python3 demo/voice/generate.py results/voice
+      - name: Publish
+        if: always()
+        run: |
+          echo "${{ github.sha }} run ${{ github.run_number }}" > results/voice/run.txt
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan voice-results
+          git rm -rf --cached . > /dev/null
+          git add -f results/voice
+          git commit -q -m "ci: voice ${{ github.run_number }}"
+          git push -f origin voice-results
