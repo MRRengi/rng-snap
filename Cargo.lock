@@ -130,6 +130,7 @@ dependencies = [
  "serde",
  "toml",
  "windows",
+ "windows-numerics",
 ]
 
 [[package]]

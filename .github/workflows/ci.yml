@@ -1,7 +1,11 @@
 name: ci
 on:
   push:
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   windows:
@@ -10,11 +14,37 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: Unit tests
-        run: cargo test --release --bins
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force results | Out-Null
+          cargo test --release --bins 2>&1 | Tee-Object results/unit.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Build
-        run: cargo build --release
+        shell: pwsh
+        run: |
+          cargo build --release 2>&1 | Tee-Object results/build.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: End-to-end test on the runner desktop
+        shell: pwsh
+        run: |
+          ./target/release/e2e.exe ./target/release/RengiSnap.exe results 2>&1 | Tee-Object results/e2e-console.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Upload exe
         uses: actions/upload-artifact@v4
         with:
           name: RengiSnap
           path: target/release/RengiSnap.exe
+      - name: Publish results branch
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path results/home) { Remove-Item -Recurse -Force results/home }
+          if (Test-Path target/release/RengiSnap.exe) { Copy-Item target/release/RengiSnap.exe results/ }
+          "${{ github.sha }} run ${{ github.run_number }} ${{ job.status }}" | Out-File results/run.txt
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan ci-results
+          git rm -rf --cached . | Out-Null
+          git add -f results
+          git commit -q -m "ci: results ${{ github.run_number }}"
+          git push -f origin ci-results
