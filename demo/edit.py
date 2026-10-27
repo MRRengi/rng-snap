@@ -437,50 +437,68 @@ class Renderer:
         return img
 
     def card(self, kind, n):
-        """Title or end card frames over a blurred wallpaper."""
+        """Title or end card: big SNAP, small 'by rng' under its right edge."""
         W, H, s = self.W, self.H, self.s
         wall = Image.open(Path(__file__).with_name("wallpaper.jpg")).convert("RGB")
         if self.square:
             wall = wall.crop((420, 0, 1500, 1080))
-        wall = wall.resize((W, H)).filter(ImageFilter.GaussianBlur(6))
+        wall = wall.resize((W, H)).filter(ImageFilter.GaussianBlur(10))
+        wall = Image.blend(wall, Image.new("RGB", (W, H), (8, 10, 22)), 0.35)
         base = wall.convert("RGBA")
+        big = int((300 if not self.square else 250) * s)
+        f_big = font(str(FONT_DIR / "InterDisplay-Black.otf"), big)
+        f_by = font(str(FONT_DIR / "InterDisplay-Medium.otf"), int(big * 0.15))
+        f_url = font(F_SEMI, int(34 * s))
+        track = -0.022 * big
+
+        # The word, drawn letter by letter with tight tracking, once.
+        letters = "SNAP"
+        widths = [f_big.getlength(c) for c in letters]
+        word_w = int(sum(widths) + track * (len(letters) - 1))
+        asc, desc = f_big.getmetrics()
+        word = Image.new("RGBA", (word_w + 20, asc + desc), (0, 0, 0, 0))
+        dw = ImageDraw.Draw(word)
+        x = 0.0
+        for c, cw in zip(letters, widths):
+            dw.text((x, 0), c, font=f_big, fill=(255, 255, 255, 255))
+            x += cw + track
+        cap_top = f_big.getbbox("S")[1]
+        cap_h = f_big.getbbox("S")[3] - cap_top
+        word = word.crop((0, cap_top, word.width, cap_top + cap_h))
+
+        by = "by rng"
+        by_w = int(f_by.getlength(by))
+        by_bb = f_by.getbbox(by)
+        gap = int(big * 0.09)
+        url = "github.com/MRRengi/rng-snap"
+        ub = f_url.getbbox(url)
+        pw, ph = ub[2] - ub[0] + int(56 * s), int(34 * s) + int(34 * s)
+        block_h = cap_h + gap + by_bb[3] + (int(70 * s) + ph if kind == "end" else 0)
+        top = (H - block_h) // 2
+        left = (W - word.width + 20) // 2
+
         frames = []
-        f_big = font(F_XBOLD, int(118 * s))
-        f_sub = font(F_MED, int(40 * s))
-        f_url = font(F_SEMI, int(36 * s))
-        if kind == "title":
-            lines = [("Rengi Snap", f_big, (255, 255, 255)), ("The free, open-source Snagit alternative", f_sub, (226, 232, 255))]
-            if self.square:
-                lines[1] = ("The free, open-source\nSnagit alternative", f_sub, (226, 232, 255))
-        else:
-            lines = [
-                ("Rengi Snap", f_big, (255, 255, 255)),
-                ("Free · Open source · Windows", f_sub, (226, 232, 255)),
-                ("github.com/MRRengi/rng-snap", f_url, (255, 255, 255)),
-            ]
         for i in range(n):
-            a = ease_out(i / (FPS * 0.6))
+            t = i / FPS
+            a = ease_out(t / 0.7)
+            a_by = ease_out((t - 0.3) / 0.6)
+            a_url = ease_out((t - 0.5) / 0.6)
             im = base.copy()
+            sc = 1.0 + 0.035 * (1 - a)
+            wimg = word if sc == 1.0 else word.resize((int(word.width * sc), int(word.height * sc)), Image.LANCZOS)
+            al = wimg.split()[3].point(lambda v, k=a: int(v * k))
+            wimg = wimg.copy()
+            wimg.putalpha(al)
+            im.alpha_composite(wimg, (left - (wimg.width - word.width) // 2, top - (wimg.height - word.height) // 2))
             d = ImageDraw.Draw(im)
-            # Logo mark.
-            m = int(96 * s)
-            total_h = m + int(36 * s) + sum(d.multiline_textbbox((0, 0), t, font=f, align="center", spacing=int(10 * s))[3] + int(22 * s) for t, f, _ in lines)
-            y = (H - total_h) / 2 + (1 - a) * 30 * s
-            lx = (W - m) // 2
-            logo = Image.new("RGBA", (m, m), (0, 0, 0, 0))
-            ImageDraw.Draw(logo).rounded_rectangle([0, 0, m - 1, m - 1], int(m * 0.28), fill=(255, 255, 255, int(255 * a)))
-            ImageDraw.Draw(logo).rounded_rectangle([int(m * 0.24), int(m * 0.24), int(m * 0.76), int(m * 0.76)], int(m * 0.1), outline=(79, 70, 229, int(255 * a)), width=max(3, int(m * 0.09)))
-            im.alpha_composite(logo, (lx, int(y)))
-            y += m + int(36 * s)
-            for idx, (t, f, col) in enumerate(lines):
-                bb = d.multiline_textbbox((0, 0), t, font=f, align="center", spacing=int(10 * s))
-                la = ease_out((i - idx * 6) / (FPS * 0.6))
-                if kind == "end" and idx == 2:
-                    pw, ph = bb[2] + int(56 * s), bb[3] + int(34 * s)
-                    p = rounded((pw, ph), ph // 2, (17, 19, 24, int(220 * max(0, la))))
-                    im.alpha_composite(p, ((W - pw) // 2, int(y - int(14 * s))))
-                d.multiline_text(((W - bb[2]) / 2, y), t, font=f, fill=(*col, int(255 * max(0, la))), align="center", spacing=int(10 * s))
-                y += bb[3] + int(22 * s) + (int(20 * s) if kind == "end" and idx == 1 else 0)
+            bx = left + word_w - by_w - int(big * 0.02)
+            by_y = top + cap_h + gap - by_bb[1] + int((1 - a_by) * 10 * s)
+            d.text((bx, by_y), by, font=f_by, fill=(255, 255, 255, int(190 * max(0.0, a_by))))
+            if kind == "end":
+                uy = top + cap_h + gap + by_bb[3] + int(70 * s)
+                p = rounded((pw, ph), ph // 2, (17, 19, 24, int(220 * max(0.0, a_url))))
+                im.alpha_composite(p, ((W - pw) // 2, uy))
+                d.text(((W - (ub[2] - ub[0])) // 2 - ub[0], uy + (ph - (ub[3] - ub[1])) // 2 - ub[1]), url, font=f_url, fill=(255, 255, 255, int(255 * max(0.0, a_url))))
             frames.append(cv2.cvtColor(np.array(im.convert("RGB")), cv2.COLOR_RGB2BGR))
         return frames
 
