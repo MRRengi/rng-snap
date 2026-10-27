@@ -255,8 +255,10 @@ impl App {
         let (windows, monitors) = wins::snapshot();
         let label = self.folder_label();
         let st = self.panel_state();
-        if self.overlay.show(&self.gfx, Arc::new(frame), windows, monitors, self.cfg.loupe, label, st) {
-            hook::set_overlay(Some(self.overlay.hwnd));
+        // Route keys before the overlay appears, so an early Esc is not lost.
+        hook::set_overlay(Some(self.overlay.hwnd));
+        if !self.overlay.show(&self.gfx, Arc::new(frame), windows, monitors, self.cfg.loupe, label, st) {
+            hook::set_overlay(None);
         }
     }
 

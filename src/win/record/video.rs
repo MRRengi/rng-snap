@@ -241,7 +241,8 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
         }
     }
 
-    // Sink writer.
+    // Sink writer. The file gets its real name only once it is complete.
+    let part = p.path.with_extension("mp4.part");
     let mut token = 0u32;
     let mut mgr = None;
     unsafe { w(MFCreateDXGIDeviceManager(&mut token, &mut mgr), "device manager")? };
@@ -255,7 +256,7 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
         w(attrs.SetUnknown(&MF_SINK_WRITER_D3D_MANAGER, &mgr), "d3d manager")?;
         w(attrs.SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_MPEG4), "container")?;
         let _ = std::fs::create_dir_all(p.path.parent().unwrap_or(std::path::Path::new(".")));
-        w(MFCreateSinkWriterFromURL(&HSTRING::from(p.path.as_os_str()), None, &attrs), "sink writer")?
+        w(MFCreateSinkWriterFromURL(&HSTRING::from(part.as_os_str()), None, &attrs), "sink writer")?
     };
     let subtype = if plan.codec == Codec::Hevc { MFVideoFormat_HEVC } else { MFVideoFormat_H264 };
     let out_t = video_type(&subtype, ow, oh, plan.fps)?;
@@ -392,11 +393,17 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
     let fin = unsafe { writer.Finalize() };
     drop(scaler);
     if let Some(e) = fail {
+        let _ = std::fs::remove_file(&part);
         return Err(e);
     }
-    w(fin, "finalize")?;
+    if let Err(e) = fin {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("finalize: {e}"));
+    }
     if ctrl.discard.load(Ordering::Acquire) {
-        let _ = std::fs::remove_file(&p.path);
+        let _ = std::fs::remove_file(&part);
+    } else if let Err(e) = std::fs::rename(&part, &p.path) {
+        return Err(format!("rename: {e}"));
     }
     let seconds = (last_idx + 1).max(0) as f64 / fps as f64;
     Ok(Summary { path: p.path.clone(), seconds, frames, plan, thumb, audio: astream.is_some() })
