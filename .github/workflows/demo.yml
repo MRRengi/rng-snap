@@ -1,0 +1,62 @@
+name: demo
+on:
+  push:
+    branches: [demo]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  film:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        shell: pwsh
+        run: |
+          cargo build --release --bin RengiSnap --bin demo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: ffmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress | Out-Null
+          ffmpeg -version | Select-Object -First 1
+      - name: 1080p
+        shell: pwsh
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Start-Sleep -Seconds 3
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+      - name: Film
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force results/demo | Out-Null
+          ./target/release/demo.exe ./target/release/RengiSnap.exe demo/page.html demo/wallpaper.jpg results/demo 2>&1 | Tee-Object results/demo/console.txt
+          $global:LASTEXITCODE = 0
+      - name: Compress
+        shell: pwsh
+        run: |
+          if (Test-Path results/demo/raw.mp4) {
+            ffmpeg -y -loglevel error -i results/demo/raw.mp4 -c:v libx264 -preset slow -crf 17 -pix_fmt yuv420p results/demo/demo-raw.mp4
+            Remove-Item results/demo/raw.mp4
+          }
+          $pics = Join-Path $env:USERPROFILE "Pictures\Rengi Snap"
+          if (Test-Path $pics) { Get-ChildItem $pics -Include *.gif,*.mp4 -Recurse | Copy-Item -Destination results/demo/ }
+          if (Test-Path results/demo/home/log.txt) { Copy-Item results/demo/home/log.txt results/demo/app-log.txt }
+          Remove-Item -Recurse -Force results/demo/home, results/demo/chrome-profile -ErrorAction SilentlyContinue
+          Get-ChildItem results/demo | Format-Table Name, Length
+      - name: Publish
+        if: always()
+        shell: pwsh
+        run: |
+          "${{ github.sha }} run ${{ github.run_number }}" | Out-File results/demo/run.txt
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan demo-results
+          git rm -rf --cached . | Out-Null
+          git add -f results/demo
+          git commit -q -m "ci: demo ${{ github.run_number }}"
+          git push -f origin demo-results
