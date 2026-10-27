@@ -16,6 +16,7 @@ use crate::image::Frame;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::DwmFlush;
 use windows::Win32::Graphics::Gdi::{CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS};
@@ -188,21 +189,21 @@ impl App {
             log("desktop grab failed");
             return;
         };
-        let candidates = wins::snapshot();
+        let (windows, monitors) = wins::snapshot();
         let label = self.folder_label();
-        if self.overlay.show(&self.gfx, Rc::new(frame), candidates, self.cfg.loupe, label) {
+        if self.overlay.show(&self.gfx, Arc::new(frame), windows, monitors, self.cfg.loupe, label) {
             hook::set_overlay(Some(self.overlay.hwnd));
         }
     }
 
-    fn end_overlay(&mut self) -> Option<Rc<Frame>> {
+    fn end_overlay(&mut self) -> Option<Arc<Frame>> {
         hook::set_overlay(None);
         let frame = self.overlay_frame();
         self.overlay.hide();
         frame
     }
 
-    fn overlay_frame(&self) -> Option<Rc<Frame>> {
+    fn overlay_frame(&self) -> Option<Arc<Frame>> {
         self.overlay.frame()
     }
 

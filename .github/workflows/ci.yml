@@ -38,6 +38,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          if (Test-Path results/home/log.txt) { Copy-Item results/home/log.txt results/app-log.txt }
           if (Test-Path results/home) { Remove-Item -Recurse -Force results/home }
           if (Test-Path target/release/RengiSnap.exe) { Copy-Item target/release/RengiSnap.exe results/ }
           "${{ github.sha }} run ${{ github.run_number }} ${{ job.status }}" | Out-File results/run.txt

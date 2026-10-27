@@ -2,6 +2,7 @@ mod app;
 mod card;
 mod clipboard;
 mod d2d;
+mod elements;
 mod files;
 mod grab;
 mod hook;
@@ -20,6 +21,8 @@ pub const WM_APP_CAPTURE: u32 = WM_APP + 1;
 pub const WM_APP_TRAY: u32 = WM_APP + 2;
 /// A key routed to the overlay by the hook. wParam = vk, lParam = shift held.
 pub const WM_APP_KEY: u32 = WM_APP + 3;
+/// The element worker has an answer for the overlay.
+pub const WM_APP_ELEMENTS: u32 = WM_APP + 4;
 
 pub mod class_name {
     use windows::core::{PCWSTR, w};

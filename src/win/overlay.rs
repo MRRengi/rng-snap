@@ -8,7 +8,10 @@ use super::{WM_APP_KEY, class_name};
 use crate::geom::{Point, Rect};
 use crate::image::{Frame, hex_color};
 use crate::select::{Key, Outcome, Selection};
-use std::rc::Rc;
+use super::elements::{Elements, Query};
+use super::util::log;
+use super::WM_APP_ELEMENTS;
+use std::sync::Arc;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
@@ -49,7 +52,14 @@ pub struct Overlay {
     rt: Option<ID2D1HwndRenderTarget>,
     rt_size: (u32, u32),
     bmp: Option<ID2D1Bitmap>,
-    frame: Option<Rc<Frame>>,
+    frame: Option<Arc<Frame>>,
+    /// Top-level windows (raw HWND, rect clipped to the desktop), topmost first.
+    windows: Vec<(isize, Rect)>,
+    elements: Elements,
+    capture: u64,
+    /// Last point sent to the element worker.
+    asked: Option<Point>,
+    debug: bool,
     vd: Rect,
     sel: Option<Selection>,
     /// Monitor (desktop coords) where the panel sits, and its UI scale.
@@ -99,6 +109,11 @@ impl Overlay {
             rt_size: (0, 0),
             bmp: None,
             frame: None,
+            windows: Vec::new(),
+            elements: Elements::start(hwnd),
+            capture: 0,
+            asked: None,
+            debug: std::env::var_os("RENGI_SNAP_DEBUG").is_some(),
             vd: Rect::default(),
             sel: None,
             monitor: Rect::default(),
@@ -113,7 +128,7 @@ impl Overlay {
         })
     }
 
-    pub fn frame(&self) -> Option<Rc<Frame>> {
+    pub fn frame(&self) -> Option<Arc<Frame>> {
         self.frame.clone()
     }
 
@@ -127,7 +142,7 @@ impl Overlay {
         self.invalidate();
     }
 
-    pub fn show(&mut self, gfx: &Gfx, frame: Rc<Frame>, candidates: Vec<Rect>, loupe: bool, folder_label: String) -> bool {
+    pub fn show(&mut self, gfx: &Gfx, frame: Arc<Frame>, windows: Vec<(isize, Rect)>, monitors: Vec<Rect>, loupe: bool, folder_label: String) -> bool {
         let vd = frame.rect;
         let (w, h) = (vd.width() as u32, vd.height() as u32);
         if self.rt.is_none() || self.rt_size != (w, h) {
@@ -152,9 +167,13 @@ impl Overlay {
         self.loupe = loupe;
         self.folder_label = folder_label;
         let tol = (6.0 * scale).round() as i32;
-        let mut sel = Selection::new(vd, candidates, tol);
+        self.windows = windows.iter().map(|(h, r)| (*h, r.intersect(&vd))).filter(|(_, r)| !r.is_empty()).collect();
+        let mut sel = Selection::new(vd, self.windows.iter().map(|w| w.1).collect(), monitors, tol);
         sel.mouse_move(cursor);
         self.sel = Some(sel);
+        self.capture += 1;
+        self.asked = None;
+        self.ask_elements(cursor);
         self.panel_hover = None;
         self.panel_press = None;
         if self.fonts.as_ref().map(|f| f.0) != Some(scale) {
@@ -178,8 +197,21 @@ impl Overlay {
         true
     }
 
+    /// Sends the point to the element worker (latest query wins there).
+    fn ask_elements(&mut self, p: Point) {
+        let Some(sel) = &self.sel else { return };
+        if !sel.is_hovering() || self.asked == Some(p) {
+            return;
+        }
+        let (Some(i), Some(frame)) = (sel.window_index(p), self.frame.clone()) else { return };
+        let (top, window) = self.windows[i];
+        self.asked = Some(p);
+        self.elements.ask(Query { capture: self.capture, point: p, top, window, frame });
+    }
+
     pub fn hide(&mut self) {
         self.sel = None;
+        self.windows.clear();
         self.bmp = None;
         self.frame = None;
         unsafe {
@@ -270,6 +302,9 @@ impl Overlay {
                 if self.panel_press.is_none() {
                     let sel = self.sel.as_mut().unwrap();
                     redraw |= sel.mouse_move(p) != Outcome::Nothing;
+                    if hover.is_none() {
+                        self.ask_elements(p);
+                    }
                 }
                 if redraw || self.loupe {
                     self.invalidate();
@@ -316,6 +351,32 @@ impl Overlay {
                 (Some(LRESULT(0)), self.outcome(out))
             }
             WM_RBUTTONUP => (Some(LRESULT(0)), Some(Event::Cancel)),
+            WM_MOUSEWHEEL => {
+                let delta = ((wp.0 >> 16) & 0xFFFF) as u16 as i16;
+                if delta != 0 {
+                    let out = self.sel.as_mut().unwrap().wheel(delta > 0);
+                    return (Some(LRESULT(0)), self.outcome(out));
+                }
+                (Some(LRESULT(0)), None)
+            }
+            WM_APP_ELEMENTS => {
+                if let Some(a) = self.elements.take() {
+                    if self.debug {
+                        log(&format!(
+                            "elements {} ms: hwnd {} uia {} pixel {} -> {:?}",
+                            a.ms, a.hwnd_n, a.uia_n, a.pixel_n, self.sel.as_ref().map(|s| s.chain(s.pos()))
+                        ));
+                    }
+                    if a.capture == self.capture {
+                        let out = self.sel.as_mut().unwrap().set_elements(a.window, a.rects);
+                        if self.debug {
+                            log(&format!("chain now {:?}", self.sel.as_ref().map(|s| s.chain(s.pos()))));
+                        }
+                        return (Some(LRESULT(0)), self.outcome(out));
+                    }
+                }
+                (Some(LRESULT(0)), None)
+            }
             WM_APP_KEY => {
                 let vk = wp.0 as u16;
                 let shift = lp.0 != 0;
@@ -579,7 +640,7 @@ impl Overlay {
         const CELLS: i32 = 17;
         let zoom = (8.0 * s).round();
         let box_px = CELLS as f32 * zoom;
-        let info_h = 74.0 * s;
+        let info_h = 90.0 * s;
         let off = 22.0 * s;
         let cursor = Point::new(pos.x - self.vd.left, pos.y - self.vd.top);
         let mon = self.local(self.monitor);
@@ -645,7 +706,8 @@ impl Overlay {
         }
         ty += line;
         if let Ok(hint) = d2d::brush(rt, rgba(0xFFFFFF, 0.38)) {
-            d2d::draw_text(rt, &fonts.small, "Press C to copy", rect_f(tx, ty, dst.right, ty + line), &hint);
+            d2d::draw_text(rt, &fonts.small, "Wheel  bigger / smaller", rect_f(tx, ty, dst.right, ty + line), &hint);
+            d2d::draw_text(rt, &fonts.small, "C  copy color", rect_f(tx, ty + line, dst.right, ty + 2.0 * line), &hint);
         }
     }
 }

@@ -51,17 +51,18 @@ fn is_candidate(hwnd: HWND, own_pid: u32) -> bool {
     }
 }
 
-pub fn snapshot() -> Vec<Rect> {
+/// Visible top-level windows (raw HWND, frame rect), topmost first, plus monitors.
+pub fn snapshot() -> (Vec<(isize, Rect)>, Vec<Rect>) {
     struct Ctx {
         own_pid: u32,
-        out: Vec<Rect>,
+        out: Vec<(isize, Rect)>,
     }
     unsafe extern "system" fn each(hwnd: HWND, lp: LPARAM) -> BOOL {
         let ctx = unsafe { &mut *(lp.0 as *mut Ctx) };
         if is_candidate(hwnd, ctx.own_pid) {
             if let Some(r) = frame_bounds(hwnd) {
                 if r.width() > 1 && r.height() > 1 {
-                    ctx.out.push(r);
+                    ctx.out.push((hwnd.0 as isize, r));
                 }
             }
         }
@@ -80,8 +81,6 @@ pub fn snapshot() -> Vec<Rect> {
         let _ = EnumWindows(Some(each), LPARAM(&mut ctx as *mut _ as isize));
         let mut monitors: Vec<Rect> = Vec::new();
         let _ = EnumDisplayMonitors(None, None, Some(each_monitor), LPARAM(&mut monitors as *mut _ as isize));
-        // Whole monitors last: hovering bare desktop offers the full screen.
-        ctx.out.extend(monitors);
+        (ctx.out, monitors)
     }
-    ctx.out
 }

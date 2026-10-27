@@ -40,6 +40,14 @@ mod e2e {
     use windows::core::w;
 
     const PAT: Rect = Rect::new(120, 100, 520, 400);
+    /// Win32 window with a bordered child panel and a button inside it.
+    const NEST: Rect = Rect::new(560, 60, 960, 360);
+    /// Window with no children that only paints a card and a button.
+    const PAINT: Rect = Rect::new(560, 390, 960, 690);
+    const PAINT_CARD: Rect = Rect::new(30, 30, 330, 230);
+    const PAINT_BUTTON: Rect = Rect::new(60, 60, 180, 100);
+    /// BGR of the painted button.
+    const BUTTON_BGR: [u8; 3] = [0xD0, 0x78, 0x20];
 
     struct Report {
         file: std::fs::File,
@@ -355,7 +363,197 @@ mod e2e {
     }
 
     fn launch(exe: &Path, home: &Path) -> std::io::Result<Child> {
-        Command::new(exe).env("RENGI_SNAP_HOME", home).env("RENGI_SNAP_NO_AUTOSTART", "1").spawn()
+        Command::new(exe)
+            .env("RENGI_SNAP_HOME", home)
+            .env("RENGI_SNAP_NO_AUTOSTART", "1")
+            .env("RENGI_SNAP_DEBUG", "1")
+            .spawn()
+    }
+
+    fn wheel(up: bool) {
+        let input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT { mouseData: if up { 120 } else { (-120i32) as u32 }, dwFlags: MOUSEEVENTF_WHEEL, ..Default::default() },
+            },
+        };
+        unsafe {
+            SendInput(&[input], size_of::<INPUT>() as i32);
+        }
+        sleep(60);
+    }
+
+    fn click() {
+        mouse(MOUSEEVENTF_LEFTDOWN);
+        sleep(40);
+        mouse(MOUSEEVENTF_LEFTUP);
+    }
+
+    /// Opens the overlay, hovers `p`, lets elements arrive, applies the wheel
+    /// steps (+1 up, -1 down), clicks, and returns the clipboard image.
+    fn capture_at(p: (i32, i32), steps: &[i32], shot: Option<(&Path, &str)>) -> Option<Frame> {
+        let s0 = seq();
+        open_overlay()?;
+        move_to(p.0 - 3, p.1 - 3);
+        sleep(80);
+        move_to(p.0, p.1);
+        sleep(600);
+        for &st in steps {
+            wheel(st > 0);
+        }
+        sleep(150);
+        if let Some((dir, name)) = shot {
+            screenshot(dir, name);
+        }
+        click();
+        if !wait(5000, || seq() != s0) {
+            close_overlay_if_open();
+            return None;
+        }
+        clip_image()
+    }
+
+    fn size_check(rep: &mut Report, name: &str, img: Option<&Frame>, want: Rect) {
+        match img {
+            Some(i) => {
+                let ok = i.width() as i32 == want.width() && i.height() as i32 == want.height();
+                rep.check(name, ok, &format!("got {}x{}, want {}x{}", i.width(), i.height(), want.width(), want.height()));
+            }
+            None => rep.check(name, false, "no capture"),
+        }
+    }
+
+    unsafe extern "system" fn nest_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+    }
+
+    unsafe extern "system" fn paint_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if msg == WM_PAINT {
+            unsafe {
+                let mut ps = PAINTSTRUCT::default();
+                let dc = BeginPaint(hwnd, &mut ps);
+                let fill = |r: Rect, bgr: [u8; 3]| {
+                    let b = CreateSolidBrush(COLORREF(bgr[2] as u32 | (bgr[1] as u32) << 8 | (bgr[0] as u32) << 16));
+                    let rr = RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+                    FillRect(dc, &rr, b);
+                    let _ = DeleteObject(b.into());
+                };
+                fill(Rect::new(0, 0, PAINT.width(), PAINT.height()), [240, 240, 240]);
+                let c = PAINT_CARD;
+                fill(c, [60, 60, 60]);
+                fill(Rect::new(c.left + 1, c.top + 1, c.right - 1, c.bottom - 1), [255, 255, 255]);
+                fill(PAINT_BUTTON, BUTTON_BGR);
+                SetBkMode(dc, TRANSPARENT);
+                let mut text: Vec<u16> = "Some text inside the card, like a real app".encode_utf16().collect();
+                let mut tr = RECT { left: 50, top: 130, right: 320, bottom: 160 };
+                DrawTextW(dc, &mut text, &mut tr, DT_LEFT | DT_SINGLELINE);
+                let _ = EndPaint(hwnd, &ps);
+            }
+            return LRESULT(0);
+        }
+        unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+    }
+
+    /// Opens a topmost test window on its own thread; `setup` may create
+    /// children and returns raw handles to report back.
+    fn spawn_window(
+        class: windows::core::PCWSTR,
+        at: Rect,
+        proc_: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+        setup: fn(HWND, HINSTANCE) -> Vec<isize>,
+    ) -> Vec<isize> {
+        let class = class.0 as usize;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            let class = windows::core::PCWSTR(class as *const u16);
+            let inst: HINSTANCE = GetModuleHandleW(None).map(|m| m.into()).unwrap_or_default();
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(proc_),
+                hInstance: inst,
+                lpszClassName: class,
+                hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+                hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as isize as *mut _),
+                ..Default::default()
+            };
+            RegisterClassW(&wc);
+            let Ok(hwnd) = CreateWindowExW(
+                WS_EX_TOPMOST,
+                class,
+                w!("test"),
+                WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN,
+                at.left,
+                at.top,
+                at.width(),
+                at.height(),
+                None,
+                None,
+                Some(inst),
+                None,
+            ) else {
+                let _ = tx.send(Vec::new());
+                return;
+            };
+            let mut handles = vec![hwnd.0 as isize];
+            handles.extend(setup(hwnd, inst));
+            let _ = tx.send(handles);
+            let mut m = MSG::default();
+            while GetMessageW(&mut m, None, 0, 0).as_bool() {
+                let _ = TranslateMessage(&m);
+                DispatchMessageW(&m);
+            }
+        });
+        rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
+    }
+
+    fn nest_children(parent: HWND, inst: HINSTANCE) -> Vec<isize> {
+        unsafe {
+            let panel = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!(""),
+                WS_CHILD | WS_VISIBLE | WS_BORDER | WS_CLIPCHILDREN,
+                20,
+                20,
+                360,
+                260,
+                Some(parent),
+                None,
+                Some(inst),
+                None,
+            );
+            let Ok(panel) = panel else { return Vec::new() };
+            let button = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("BUTTON"),
+                w!("OK"),
+                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(0), // BS_PUSHBUTTON = 0
+                40,
+                40,
+                120,
+                40,
+                Some(panel),
+                None,
+                Some(inst),
+                None,
+            );
+            match button {
+                Ok(b) => vec![panel.0 as isize, b.0 as isize],
+                Err(_) => vec![panel.0 as isize],
+            }
+        }
+    }
+
+    fn no_children(_: HWND, _: HINSTANCE) -> Vec<isize> {
+        Vec::new()
+    }
+
+    fn window_rect(h: isize) -> Rect {
+        let mut r = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(HWND(h as *mut _), &mut r);
+        }
+        Rect::new(r.left, r.top, r.right, r.bottom)
     }
 
     /// Presses the hotkey and waits for the overlay. Returns ms until it showed.
@@ -387,6 +585,9 @@ mod e2e {
         rep.line(&format!("desktop {}x{}", desk.0, desk.1));
 
         spawn_pattern_window();
+        let nest = spawn_window(w!("E2ENested"), NEST, nest_proc, nest_children);
+        let paint = spawn_window(w!("E2EPainted"), PAINT, paint_proc, no_children);
+        rep.check("test windows created", nest.len() == 3 && paint.len() == 1, &format!("nest {} paint {}", nest.len(), paint.len()));
         sleep(500);
         let mut app = match launch(&exe, &home) {
             Ok(c) => c,
@@ -445,25 +646,50 @@ mod e2e {
         }
         close_overlay_if_open();
 
-        // B: click a window without dragging.
-        let s0 = seq();
-        if open_overlay().is_some() {
-            move_to(PAT.left + 180, PAT.top + 150);
-            sleep(150);
-            mouse(MOUSEEVENTF_LEFTDOWN);
-            sleep(40);
-            mouse(MOUSEEVENTF_LEFTUP);
-            rep.check("B clipboard updated", wait(5000, || seq() != s0), "");
-            match clip_image() {
-                Some(img) => {
-                    let r = matches_pattern(&img, PAT);
-                    rep.check("B click captures the whole window", r.is_ok(), &r.err().unwrap_or_default());
-                }
-                None => rep.check("B clipboard has an image", false, ""),
+        // B: wheel to the window level (one below the monitor) and click.
+        let img = capture_at((PAT.left + 180, PAT.top + 150), &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1], None);
+        match img {
+            Some(img) => {
+                let r = matches_pattern(&img, PAT);
+                rep.check("B window level captures the whole window", r.is_ok(), &r.err().unwrap_or_default());
             }
-        } else {
-            rep.check("B hotkey opens overlay", false, "");
+            None => rep.check("B capture", false, ""),
         }
+        close_overlay_if_open();
+
+        // I: child controls (HWND + UI Automation path).
+        if nest.len() == 3 {
+            let (panel, button) = (window_rect(nest[1]), window_rect(nest[2]));
+            rep.line(&format!("nested: window {NEST:?} panel {panel:?} button {button:?}"));
+            let c = (button.left + button.width() / 2, button.top + button.height() / 2);
+            let img = capture_at(c, &[], Some((&rep.dir, "i1-button")));
+            size_check(&mut rep, "I hover + click captures the button", img.as_ref(), button);
+            close_overlay_if_open();
+            let img = capture_at(c, &[1], Some((&rep.dir, "i2-panel")));
+            size_check(&mut rep, "I wheel up once captures the panel", img.as_ref(), panel);
+            close_overlay_if_open();
+            let img = capture_at(c, &[1, 1], None);
+            size_check(&mut rep, "I wheel up twice captures the window", img.as_ref(), NEST);
+            close_overlay_if_open();
+        }
+
+        // J: pixels only (no child windows, nothing for UI Automation).
+        let pb = PAINT_BUTTON.offset(PAINT.left, PAINT.top);
+        let pc = PAINT_CARD.offset(PAINT.left, PAINT.top);
+        let c = (pb.left + 20, pb.top + 10);
+        let img = capture_at(c, &[], Some((&rep.dir, "j1-painted-button")));
+        size_check(&mut rep, "J pixel box: button", img.as_ref(), pb);
+        if let Some(i) = &img {
+            let (w, h) = (i.width() as i32 - 1, i.height() as i32 - 1);
+            let corners = [(0, 0), (w, 0), (0, h), (w, h)].iter().all(|&(x, y)| i.pixel(x, y) == Some(BUTTON_BGR));
+            rep.check("J button capture is pixel exact (all corners are button color)", corners, "");
+        }
+        close_overlay_if_open();
+        let img = capture_at(c, &[1], Some((&rep.dir, "j2-painted-card")));
+        size_check(&mut rep, "J pixel box: card", img.as_ref(), pc);
+        close_overlay_if_open();
+        let img = capture_at(c, &[1, 1], None);
+        size_check(&mut rep, "J pixel box: window", img.as_ref(), PAINT);
         close_overlay_if_open();
 
         // C: Esc cancels and leaves the clipboard alone.
@@ -584,6 +810,46 @@ mod e2e {
             rep.check("H Esc closes the folder menu and then the overlay", wait(2000, || !overlay_visible()), "");
         }
         close_overlay_if_open();
+
+        // K: a real app (Explorer), screenshots only.
+        for h in nest.iter().take(1).chain(paint.iter()) {
+            unsafe {
+                let _ = ShowWindow(HWND(*h as *mut _), SW_HIDE);
+            }
+        }
+        if let Some(pw) = find(w!("E2EPattern")) {
+            unsafe {
+                let _ = ShowWindow(pw, SW_HIDE);
+            }
+        }
+        let _ = Command::new("explorer.exe").arg("C:\\Windows").spawn();
+        if wait(10000, || find(w!("CabinetWClass")).is_some()) {
+            sleep(2500);
+            let ex = find(w!("CabinetWClass")).unwrap();
+            unsafe {
+                let _ = SetWindowPos(ex, Some(HWND_TOP), 40, 70, 940, 600, SWP_SHOWWINDOW);
+                let _ = SetForegroundWindow(ex);
+            }
+            sleep(1500);
+            for (name, p) in [("k1-explorer-list", (560, 330)), ("k2-explorer-nav", (130, 330)), ("k3-explorer-toolbar", (300, 160))] {
+                if open_overlay().is_some() {
+                    move_to(p.0 - 3, p.1);
+                    sleep(60);
+                    move_to(p.0, p.1);
+                    sleep(700);
+                    screenshot(&rep.dir, &format!("{name}-0"));
+                    wheel(true);
+                    sleep(150);
+                    screenshot(&rep.dir, &format!("{name}-1"));
+                    wheel(true);
+                    sleep(150);
+                    screenshot(&rep.dir, &format!("{name}-2"));
+                }
+                close_overlay_if_open();
+            }
+        } else {
+            rep.line("explorer window not found");
+        }
 
         let scroll_after = unsafe { GetKeyState(VK_SCROLL.0 as i32) } & 1;
         rep.check("Scroll Lock state never toggled", scroll_before == scroll_after, "");

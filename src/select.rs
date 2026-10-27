@@ -5,6 +5,8 @@ use crate::geom::{Point, Rect};
 
 /// Mouse travel (px) below which a press + release counts as a click.
 pub const CLICK_SLOP: i32 = 3;
+/// Elements smaller than this on either side are ignored.
+pub const MIN_ELEMENT: i32 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
@@ -56,7 +58,7 @@ enum State {
 /// What the overlay should draw right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct View {
-    /// The bright area (drag frame, edited frame or hovered window).
+    /// The bright area (drag frame, edited frame or hovered region).
     pub frame: Option<Rect>,
     /// True while the frame is a hover suggestion rather than a real selection.
     pub suggestion: bool,
@@ -64,39 +66,97 @@ pub struct View {
     pub editing: bool,
 }
 
+fn near(a: Rect, b: Rect) -> bool {
+    (a.left - b.left).abs() <= 2 && (a.top - b.top).abs() <= 2 && (a.right - b.right).abs() <= 2 && (a.bottom - b.bottom).abs() <= 2
+}
+
 pub struct Selection {
     bounds: Rect,
-    candidates: Vec<Rect>,
+    /// Top-level windows, topmost first, clipped to bounds.
+    windows: Vec<Rect>,
+    monitors: Vec<Rect>,
+    /// Latest element answer and the window it belongs to.
+    elements: Vec<Rect>,
+    elements_window: Option<Rect>,
+    /// Chosen level counted from the largest (0 = largest). None = smallest.
+    up: Option<usize>,
     state: State,
     pos: Point,
     handle_tol: i32,
 }
 
 impl Selection {
-    /// `candidates` are window / region rects in z-order, topmost first.
-    /// They are clipped to `bounds`; empty ones are dropped.
-    pub fn new(bounds: Rect, candidates: Vec<Rect>, handle_tol: i32) -> Self {
-        let candidates = candidates
-            .into_iter()
-            .map(|r| r.intersect(&bounds))
-            .filter(|r| !r.is_empty())
-            .collect();
-        Self { bounds, candidates, state: State::Hover, pos: Point::default(), handle_tol: handle_tol.max(2) }
+    pub fn new(bounds: Rect, windows: Vec<Rect>, monitors: Vec<Rect>, handle_tol: i32) -> Self {
+        let clip = |v: Vec<Rect>| v.into_iter().map(|r| r.intersect(&bounds)).filter(|r| !r.is_empty()).collect();
+        Self {
+            bounds,
+            windows: clip(windows),
+            monitors: clip(monitors),
+            elements: Vec::new(),
+            elements_window: None,
+            up: None,
+            state: State::Hover,
+            pos: Point::default(),
+            handle_tol: handle_tol.max(2),
+        }
     }
 
     pub fn pos(&self) -> Point {
         self.pos
     }
 
-    pub fn pick(&self, p: Point) -> Option<Rect> {
-        self.candidates.iter().copied().find(|r| r.contains(p))
+    /// Index of the topmost window under the point.
+    pub fn window_index(&self, p: Point) -> Option<usize> {
+        self.windows.iter().position(|r| r.contains(p))
+    }
+
+    pub fn is_hovering(&self) -> bool {
+        matches!(self.state, State::Hover)
+    }
+
+    /// Levels under the point, smallest first.
+    pub fn chain(&self, p: Point) -> Vec<Rect> {
+        let mut v = Vec::new();
+        if let Some(w) = self.windows.iter().copied().find(|r| r.contains(p)) {
+            if self.elements_window == Some(w) {
+                for e in &self.elements {
+                    let e = e.intersect(&w);
+                    if e.contains(p) && e.width() >= MIN_ELEMENT && e.height() >= MIN_ELEMENT && e.area() < w.area() {
+                        v.push(e);
+                    }
+                }
+            }
+            v.push(w);
+        }
+        if let Some(m) = self.monitors.iter().copied().find(|r| r.contains(p)) {
+            v.push(m);
+        }
+        v.sort_by_key(|r| r.area());
+        let mut out: Vec<Rect> = Vec::new();
+        for r in v {
+            match out.last_mut() {
+                Some(last) if near(*last, r) => *last = r,
+                _ => out.push(r),
+            }
+        }
+        out
+    }
+
+    fn level_index(&self, len: usize) -> usize {
+        match self.up {
+            None => 0,
+            Some(k) => len - 1 - k.min(len - 1),
+        }
+    }
+
+    fn suggest(&self, p: Point) -> Option<Rect> {
+        let c = self.chain(p);
+        if c.is_empty() { None } else { Some(c[self.level_index(c.len())]) }
     }
 
     pub fn view(&self) -> View {
         match self.state {
-            State::Hover | State::Pressed { .. } => {
-                View { frame: self.pick(self.pos), suggestion: true, editing: false }
-            }
+            State::Hover | State::Pressed { .. } => View { frame: self.suggest(self.pos), suggestion: true, editing: false },
             State::Dragging { anchor, pos } => {
                 let r = self.drag_rect(anchor, pos);
                 View { frame: (!r.is_empty()).then_some(r), suggestion: false, editing: false }
@@ -105,16 +165,47 @@ impl Selection {
         }
     }
 
+    /// New element answer for `window` (rects in any order).
+    pub fn set_elements(&mut self, window: Rect, rects: Vec<Rect>) -> Outcome {
+        let before = self.view();
+        self.elements_window = Some(window.intersect(&self.bounds));
+        self.elements = rects;
+        if self.view() != before { Outcome::Redraw } else { Outcome::Nothing }
+    }
+
+    /// Mouse wheel while hovering: bigger = one level up.
+    pub fn wheel(&mut self, bigger: bool) -> Outcome {
+        if !self.is_hovering() {
+            return Outcome::Nothing;
+        }
+        let c = self.chain(self.pos);
+        if c.len() < 2 {
+            return Outcome::Nothing;
+        }
+        let from_top = c.len() - 1 - self.level_index(c.len());
+        let new_up = if bigger {
+            if from_top == 0 {
+                return Outcome::Nothing;
+            }
+            Some(from_top - 1)
+        } else if from_top + 1 >= c.len() - 1 {
+            None
+        } else {
+            Some(from_top + 1)
+        };
+        if new_up == self.up {
+            return Outcome::Nothing;
+        }
+        self.up = new_up;
+        Outcome::Redraw
+    }
+
     /// Edges under the point while editing (for cursor shapes). `None` = outside the frame.
     pub fn hit(&self, p: Point) -> Option<Edges> {
         match self.state {
             State::Editing { rect, .. } => self.hit_rect(rect, p),
             _ => None,
         }
-    }
-
-    pub fn is_editing(&self) -> bool {
-        matches!(self.state, State::Editing { .. })
     }
 
     fn drag_rect(&self, anchor: Point, pos: Point) -> Rect {
@@ -204,7 +295,7 @@ impl Selection {
         self.pos = p;
         match self.state {
             State::Hover => Outcome::Nothing,
-            State::Pressed { anchor } => match self.pick(anchor) {
+            State::Pressed { anchor } => match self.suggest(anchor) {
                 Some(r) if keep_open => {
                     self.state = State::Editing { rect: r, op: None };
                     Outcome::Redraw
@@ -266,22 +357,25 @@ impl Selection {
 mod tests {
     use super::*;
 
+    const SMALL: Rect = Rect::new(100, 100, 300, 250);
+    const BIG: Rect = Rect::new(50, 50, 900, 700);
+    const MON: Rect = Rect::new(0, 0, 1000, 800);
+
     fn sel() -> Selection {
-        let bounds = Rect::new(0, 0, 1000, 800);
         // Topmost first: a small window over a big one.
-        Selection::new(bounds, vec![Rect::new(100, 100, 300, 250), Rect::new(50, 50, 900, 700), Rect::new(-100, 0, 1000, 800)], 5)
+        Selection::new(MON, vec![SMALL, BIG], vec![Rect::new(-100, 0, 1000, 800)], 5)
     }
 
     #[test]
     fn hover_suggests_topmost_window() {
         let mut s = sel();
         s.mouse_move(Point::new(150, 150));
-        assert_eq!(s.view(), View { frame: Some(Rect::new(100, 100, 300, 250)), suggestion: true, editing: false });
+        assert_eq!(s.view(), View { frame: Some(SMALL), suggestion: true, editing: false });
         s.mouse_move(Point::new(600, 600));
-        assert_eq!(s.view().frame, Some(Rect::new(50, 50, 900, 700)));
-        // Candidates are clipped to bounds.
+        assert_eq!(s.view().frame, Some(BIG));
+        // Monitors are clipped to bounds; bare desktop offers the monitor.
         s.mouse_move(Point::new(10, 10));
-        assert_eq!(s.view().frame, Some(Rect::new(0, 0, 1000, 800)));
+        assert_eq!(s.view().frame, Some(MON));
     }
 
     #[test]
@@ -290,7 +384,71 @@ mod tests {
         s.mouse_move(Point::new(150, 150));
         s.mouse_down(Point::new(150, 150));
         s.mouse_move(Point::new(152, 151));
-        assert_eq!(s.mouse_up(Point::new(152, 151), false), Outcome::Confirm(Rect::new(100, 100, 300, 250)));
+        assert_eq!(s.mouse_up(Point::new(152, 151), false), Outcome::Confirm(SMALL));
+    }
+
+    #[test]
+    fn elements_refine_and_wheel_walks_levels() {
+        let mut s = sel();
+        let button = Rect::new(500, 400, 560, 430);
+        let panel = Rect::new(450, 300, 800, 600);
+        let p = Point::new(520, 410);
+        s.mouse_move(p);
+        assert_eq!(s.view().frame, Some(BIG));
+        // Unordered, with a near-duplicate, a tiny one and one outside the point.
+        let out = s.set_elements(
+            BIG,
+            vec![panel, button, Rect::new(501, 401, 559, 429), Rect::new(510, 405, 515, 409), Rect::new(60, 60, 100, 100)],
+        );
+        assert_eq!(out, Outcome::Redraw);
+        assert_eq!(s.chain(p), vec![button, panel, BIG, MON]);
+        assert_eq!(s.view().frame, Some(button));
+        assert_eq!(s.wheel(true), Outcome::Redraw);
+        assert_eq!(s.view().frame, Some(panel));
+        s.wheel(true);
+        assert_eq!(s.view().frame, Some(BIG));
+        s.wheel(true);
+        assert_eq!(s.view().frame, Some(MON));
+        assert_eq!(s.wheel(true), Outcome::Nothing);
+        s.wheel(false);
+        s.wheel(false);
+        assert_eq!(s.view().frame, Some(panel));
+        s.wheel(false);
+        assert_eq!(s.view().frame, Some(button));
+        assert_eq!(s.wheel(false), Outcome::Nothing);
+    }
+
+    #[test]
+    fn window_level_sticks_while_moving() {
+        let mut s = sel();
+        s.set_elements(BIG, vec![Rect::new(500, 400, 560, 430), Rect::new(450, 300, 800, 600)]);
+        s.mouse_move(Point::new(520, 410));
+        s.wheel(true);
+        s.wheel(true); // window level (one below monitor)
+        assert_eq!(s.view().frame, Some(BIG));
+        s.mouse_move(Point::new(150, 150));
+        assert_eq!(s.view().frame, Some(SMALL));
+    }
+
+    #[test]
+    fn elements_for_another_window_are_ignored() {
+        let mut s = sel();
+        s.set_elements(SMALL, vec![Rect::new(120, 120, 200, 200)]);
+        s.mouse_move(Point::new(600, 600));
+        assert_eq!(s.chain(Point::new(600, 600)), vec![BIG, MON]);
+        s.mouse_move(Point::new(150, 150));
+        assert_eq!(s.view().frame, Some(Rect::new(120, 120, 200, 200)));
+    }
+
+    #[test]
+    fn click_uses_current_level() {
+        let mut s = sel();
+        s.set_elements(BIG, vec![Rect::new(500, 400, 560, 430)]);
+        let p = Point::new(520, 410);
+        s.mouse_move(p);
+        s.wheel(true);
+        s.mouse_down(p);
+        assert_eq!(s.mouse_up(p, false), Outcome::Confirm(BIG));
     }
 
     #[test]
@@ -300,6 +458,7 @@ mod tests {
         s.mouse_move(Point::new(500, 350));
         assert_eq!(s.view().frame, Some(Rect::new(400, 300, 500, 350)));
         assert!(!s.view().suggestion);
+        assert_eq!(s.wheel(true), Outcome::Nothing);
         assert_eq!(s.mouse_up(Point::new(600, 450), false), Outcome::Confirm(Rect::new(400, 300, 600, 450)));
     }
 
@@ -317,18 +476,14 @@ mod tests {
         s.mouse_down(Point::new(400, 300));
         s.mouse_move(Point::new(500, 400));
         assert_eq!(s.mouse_up(Point::new(500, 400), true), Outcome::Redraw);
-        assert!(s.is_editing());
-        // Move by dragging inside.
         s.mouse_down(Point::new(450, 350));
         s.mouse_move(Point::new(460, 360));
         s.mouse_up(Point::new(460, 360), false);
         assert_eq!(s.view().frame, Some(Rect::new(410, 310, 510, 410)));
-        // Resize the bottom-right corner.
         s.mouse_down(Point::new(510, 410));
         s.mouse_move(Point::new(530, 440));
         s.mouse_up(Point::new(530, 440), false);
         assert_eq!(s.view().frame, Some(Rect::new(410, 310, 530, 440)));
-        // Nudge with arrows.
         s.key(Key::Right, false);
         s.key(Key::Down, true);
         assert_eq!(s.key(Key::Enter, false), Outcome::Confirm(Rect::new(411, 320, 531, 450)));
@@ -340,7 +495,7 @@ mod tests {
         s.mouse_down(Point::new(400, 300));
         s.mouse_move(Point::new(500, 400));
         s.mouse_up(Point::new(500, 400), true);
-        s.mouse_down(Point::new(400, 350)); // left edge
+        s.mouse_down(Point::new(400, 350));
         s.mouse_move(Point::new(560, 350));
         assert_eq!(s.view().frame, Some(Rect::new(500, 300, 560, 400)));
     }
@@ -366,7 +521,7 @@ mod tests {
 
     #[test]
     fn tiny_drag_with_no_window_returns_to_hover() {
-        let mut s = Selection::new(Rect::new(0, 0, 100, 100), vec![], 5);
+        let mut s = Selection::new(Rect::new(0, 0, 100, 100), vec![], vec![], 5);
         s.mouse_down(Point::new(10, 10));
         assert_eq!(s.mouse_up(Point::new(11, 11), false), Outcome::Redraw);
         assert_eq!(s.view().frame, None);

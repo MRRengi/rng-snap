@@ -4,6 +4,7 @@ mod config;
 mod geom;
 mod icon;
 mod image;
+mod regions;
 mod select;
 #[cfg(windows)]
 mod win;
