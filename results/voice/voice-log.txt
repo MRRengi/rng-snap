@@ -1,0 +1,10 @@
+voice 0: VH4ij6OsZJT72dgL7ECC
+voice 1: wUc0HMbyLmMJH0m2egfS
+voice 2: gGd9aIsYBuQNg6HZAgKc
+narration 0: 961767 bytes
+stt 0: Meet Snap, a free open source screenshot tool for Windows. Press Scroll Lock and the screen freezes. Move your cursor and Snap finds every element underneath it. Scroll to grab a bigger area or a smaller one. Hold Control and mark it up right there. Boxes, arrows, numbered steps. Hit Enter, and it's on your clipboard. Need more? Open the editor. Blur anything private, add a note, and every change is copied automatically. It records video too, up to a hundred and twenty frames per second. Saved as an MP4 and one click turns it into a GIF. Snap, free on GitHub.
+narration 1: 944212 bytes
+stt 1: Meet Snap, a free open source screenshot tool for Windows. Press Scroll Lock and the screen freezes. Move your cursor and Snap finds every element underneath it. Scroll to grab a bigger area or a smaller one. Hold Control and mark it up right there. Boxes, arrows, numbered steps. Hit Enter and it's on your clipboard. Need more? Open the editor. Blur anything private, add a note, and every change is copied automatically. It records video too, up to a hundred and twenty frames per second, saved as an MP4 and one click turns it into a GIF. Snap. Free on GitHub.
+narration 2: 969290 bytes
+stt 2: Meet Snap, a free open source screenshot tool for Windows. Press Scroll Lock and the screen freezes. Move your cursor and Snap finds every element underneath it. Scroll to grab a bigger area or a smaller one. Hold Control and mark it up right there. Boxes, arrows, numbered steps. Hit Enter, and it's on your clipboard. Need more? Open the editor. Blur anything private, add a note, and every change is copied automatically. It records video too, up to a hundred and twenty frames per second, saved as an MP4, and one click turns it into a GIF. Snap. Free on GitHub.
+music ok
