@@ -75,6 +75,7 @@ pub fn run() {
         return;
     }
 
+    dark_menus();
     let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }.map(|m| m.into()).unwrap_or_default();
     register_classes(instance);
 
@@ -475,3 +476,22 @@ fn make_icon() -> HICON {
     }
 }
 
+
+/// Dark popup menus to match the panel. Uses the uxtheme entry points every
+/// dark-mode Win32 app relies on (ordinals 135 SetPreferredAppMode and
+/// 136 FlushMenuThemes); on systems without them nothing happens.
+fn dark_menus() {
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    use windows::core::PCSTR;
+    unsafe {
+        let Ok(m) = LoadLibraryW(w!("uxtheme.dll")) else { return };
+        if let Some(f) = GetProcAddress(m, PCSTR(135usize as *const u8)) {
+            let set: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
+            set(2); // ForceDark
+        }
+        if let Some(f) = GetProcAddress(m, PCSTR(136usize as *const u8)) {
+            let flush: unsafe extern "system" fn() = std::mem::transmute(f);
+            flush();
+        }
+    }
+}
