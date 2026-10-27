@@ -8,7 +8,6 @@ use super::overlay::ACCENT;
 use super::util::{lparam_point, to_win_rect};
 use crate::geom::{Point, Rect};
 use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DwmSetWindowAttribute};
@@ -46,6 +45,10 @@ pub struct RecBar {
 }
 
 fn exclude_from_capture(h: HWND) {
+    // Test hook: lets the e2e film the bar to review its look.
+    if std::env::var_os("RENGI_SNAP_BAR_VISIBLE").is_some() {
+        return;
+    }
     unsafe {
         let _ = SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE);
     }

@@ -186,7 +186,14 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
     let pool = w(Direct3D11CaptureFramePool::CreateFreeThreaded(&winrt_dev, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, size), "frame pool")?;
     let session: GraphicsCaptureSession = w(pool.CreateCaptureSession(&item), "session")?;
     let _ = session.SetIsCursorCaptureEnabled(true);
-    let _ = session.SetIsBorderRequired(false);
+    // Windows 11 draws a yellow frame around captured screens unless the app
+    // asked for borderless capture first (granted to desktop apps).
+    if let Ok(op) = windows::Graphics::Capture::GraphicsCaptureAccess::RequestAccessAsync(windows::Graphics::Capture::GraphicsCaptureAccessKind::Borderless) {
+        let _ = op.join();
+    }
+    if let Err(e) = session.SetIsBorderRequired(false) {
+        log(&format!("border stays: {e}"));
+    }
     let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
     w(session.StartCapture(), "start capture")?;
 

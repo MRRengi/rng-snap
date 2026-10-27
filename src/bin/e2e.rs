@@ -1173,6 +1173,39 @@ mod e2e {
             }
         }
 
+        // V8: film the bar on purpose (test-only switch) to review its look.
+        let _ = app.kill();
+        let _ = app.wait();
+        wait(5000, || find(w!("RengiSnapMsg")).is_none());
+        write_config(&home, "mic = true");
+        if let Ok(c) = Command::new(&exe)
+            .env("RENGI_SNAP_HOME", &home)
+            .env("RENGI_SNAP_NO_AUTOSTART", "1")
+            .env("RENGI_SNAP_BAR_VISIBLE", "1")
+            .spawn()
+        {
+            app = c;
+            wait(10000, || find(w!("RengiSnapMsg")).is_some());
+            sleep(500);
+            if open_overlay().is_some() {
+                drag_to((PAT.left + 40, PAT.top + 40), (PAT.left + 300, PAT.top + 200));
+                if wait(4000, || visible(w!("RengiSnapBar"))) {
+                    sleep(1300);
+                    let bar = window_rect(find(w!("RengiSnapBar")).unwrap().0 as isize);
+                    move_to(bar.left + 6 + 92 + 17, bar.top + bar.height() / 2);
+                    sleep(300);
+                    screenshot(&rep.dir, "v8-bar-look");
+                    tap(VK_SCROLL);
+                    wait(8000, || !visible(w!("RengiSnapBar")));
+                }
+            }
+            if let Some(c) = find(w!("RengiSnapCard")) {
+                unsafe {
+                    let _ = ShowWindow(c, SW_HIDE);
+                }
+            }
+        }
+
         // K: a real app (Explorer), screenshots only.
         for h in nest.iter().take(1).chain(paint.iter()) {
             unsafe {
