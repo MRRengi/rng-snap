@@ -47,6 +47,7 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           "new=$new" >> $env:GITHUB_OUTPUT
           Write-Host "version $v, new release: $new"
+          $global:LASTEXITCODE = 0
       - name: Publish release
         if: steps.ver.outputs.new == 'true'
         uses: softprops/action-gh-release@v2
