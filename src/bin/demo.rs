@@ -643,11 +643,11 @@ mod demo {
 
         // 2. Smart regions.
         beat("caption", "It finds every element under the cursor");
-        glide(page_at(470, 178), 700);
+        glide(page_at(480, 318), 700);
         sleep(900);
-        glide(page_at(800, 178), 650);
+        glide(page_at(800, 318), 650);
         sleep(800);
-        glide(page_at(1120, 178), 650);
+        glide(page_at(1120, 318), 650);
         sleep(800);
         glide(page_at(1400, 650), 800);
         sleep(900);

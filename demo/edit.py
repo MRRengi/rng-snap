@@ -42,13 +42,16 @@ class Take:
             if p[0] == "viewport":
                 self.vp = tuple(map(int, p[1:5]))
         self.video = str(d / "demo-raw.mp4")
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0", self.video], capture_output=True, text=True).stdout
+        self.pts = sorted(float(x) for x in out.split() if x.strip())
         self.flash_frame = find_flash(self.video)
-        self.wm = watermark(self.video, self.flash_frame + 45)
+        self.t_flash = self.pts[self.flash_frame]
+        self.wm = watermark(self.video, self.src_index(1200))
         self.end = next((t for t, k, x in self.beats if k == "mark" and x == "end"), self.beats[-1][0])
 
-    def src_frame(self, ms):
-        """Source frame index for beat time `ms` (0 = flash on screen)."""
-        return self.flash_frame + ms * FPS / 1000.0
+    def src_index(self, ms):
+        """Index of the source frame on screen at beat time `ms` (0 = flash on screen)."""
+        return max(0, bisect.bisect_right(self.pts, self.t_flash + ms / 1000.0) - 1)
 
     def cursor(self, ms):
         i = bisect.bisect_left(self.ct, ms)
@@ -297,6 +300,26 @@ class Renderer:
         self.cap_cache = {}
         self.key_cache = {}
         self.ring = self.make_ring()
+        self.cursors = {}
+
+    def make_cursor(self, size):
+        """Arrow pointer, tip at (pad, pad) of the returned RGBA array."""
+        k = 4
+        pts = [(0, 0), (0, 17.5), (4.2, 13.6), (7.0, 20.0), (9.6, 18.9), (6.9, 12.7), (12.6, 12.4)]
+        sc = size / 20.0 * k
+        pad = 6 * k
+        W = int(14 * sc + pad * 2)
+        H = int(21 * sc + pad * 2)
+        im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        poly = [(pad + x * sc, pad + y * sc) for x, y in pts]
+        sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(sh).polygon([(x + 1.2 * k, y + 2 * k) for x, y in poly], fill=(0, 0, 0, 120))
+        sh = sh.filter(ImageFilter.GaussianBlur(2.2 * k))
+        im.alpha_composite(sh)
+        d = ImageDraw.Draw(im)
+        d.polygon(poly, fill=(255, 255, 255, 255), outline=(16, 16, 20, 255), width=int(1.6 * k))
+        im = im.resize((W // k, H // k), Image.LANCZOS)
+        return to_np(im), pad // k
 
     def make_ring(self):
         r = 34
@@ -344,15 +367,21 @@ class Renderer:
         px, py = tk.cursor(ms)
         sx, sy = (px - x0) * sc, (py - y0) * sc
         r = self.ring
-        blend(img, r, int(sx - r.shape[1] / 2 + 6), int(sy - r.shape[0] / 2 + 8), 1.0)
+        blend(img, r, int(sx - r.shape[1] / 2), int(sy - r.shape[0] / 2), 1.0)
         for c in self.clicks:
             dt = ms - c
             if 0 <= dt < 450:
                 a = dt / 450
                 rad = int((18 + 40 * ease_out(a)) * self.s * max(1.0, sc * 0.8))
                 ov = img.copy()
-                cv2.circle(ov, (int(sx + 6), int(sy + 8)), rad, (10, 214, 255), max(2, int(4 * self.s)), cv2.LINE_AA)
+                cv2.circle(ov, (int(sx), int(sy)), rad, (10, 214, 255), max(2, int(4 * self.s)), cv2.LINE_AA)
                 cv2.addWeighted(ov, 0.85 * (1 - a), img, 1 - 0.85 * (1 - a), 0, img)
+
+        csize = int(round(26 * self.s * min(1.6, max(1.0, sc ** 0.5))))
+        if csize not in self.cursors:
+            self.cursors[csize] = self.make_cursor(csize)
+        cim, cpad = self.cursors[csize]
+        blend(img, cim, int(round(sx)) - cpad, int(round(sy)) - cpad, 1.0)
 
         # Caption: current one, fade in/out.
         cur = None
@@ -450,7 +479,7 @@ class Renderer:
         first = None
         n = 0
         for ms in self.timeline():
-            want = int(round(self.tk.src_frame(ms)))
+            want = self.tk.src_index(ms)
             while pos < want:
                 ok, f = cap.read()
                 if not ok:
