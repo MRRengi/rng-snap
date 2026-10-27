@@ -6,17 +6,17 @@
   "music_ms": 56000,
   "lines": [
     {"id": "title", "text": "Meet Snap. Free and open source."},
-    {"id": "freeze", "text": "Hit Scroll Lock, and the screen freezes."},
+    {"id": "freeze", "text": "Scroll Lock freezes the screen."},
     {"id": "finds", "text": "Snap sees every element under your cursor."},
     {"id": "wheel", "text": "Scroll to go a level up, or down."},
     {"id": "ctrl", "text": "Hold Control, and mark it up right there."},
-    {"id": "copied", "text": "Press Enter. It's already in your clipboard."},
+    {"id": "copied", "text": "Enter, and it's copied."},
     {"id": "editor", "text": "Need more? Open the editor."},
     {"id": "blur", "text": "Blur anything private."},
     {"id": "note", "text": "Add a note."},
     {"id": "auto", "text": "Every change is copied automatically."},
     {"id": "video", "text": "Video too. Up to a hundred and twenty frames per second."},
-    {"id": "mp4", "text": "Saved straight to MP4."},
+    {"id": "mp4", "text": "Saved as MP4."},
     {"id": "gif", "text": "And one click turns it into a GIF."},
     {"id": "end", "text": "Snap. Free, on GitHub."}
   ]

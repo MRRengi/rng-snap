@@ -15,6 +15,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 FPS = 60
+TITLE_S = 3.0
+END_S = 3.2
 FONT_DIR = Path("/usr/share/fonts/opentype/inter")
 F_SEMI = str(FONT_DIR / "Inter-SemiBold.otf")
 F_BOLD = str(FONT_DIR / "Inter-Bold.otf")
@@ -265,13 +267,13 @@ def direction(tk: Take):
         (t_smart, t_wheel, 1.6),  # hover tour
         (t_wheel, t_quick, 1.3),
         (t_quick, t_enter + 200, 1.3),  # marks
-        (t_enter + 200, t_open + 1200, 1.15),
-        (t_open + 1200, t_blur - 200, 2.0),  # editor opening
+        (t_enter + 200, t_open + 1200, 1.0),
+        (t_open + 1200, t_blur - 200, 1.0),  # editor opening
         (t_blur - 200, t_clip + 1200, 1.3),
         (t_clip + 1200, t_video - 150, 3.0),  # editor closing
         (t_video - 150, t_rec + 200, 1.3),
         (t_rec + 200, t_saved, 1.6),
-        (t_saved, t_gifc + 200, 1.6),
+        (t_saved, t_gifc + 200, 1.0),
         (t_gifc + 200, t_gif - 500, max(3.0, (t_gif - t_gifc) / 2200)),  # gif encoding
         (t_gif - 500, min(t_gif + 1200, t_end), 1.0),
     ]
@@ -509,7 +511,7 @@ class Renderer:
             stdin=subprocess.PIPE,
         )
         w = enc.stdin.write
-        title = self.card("title", int(FPS * 2.2))
+        title = self.card("title", int(FPS * TITLE_S))
         footage = []
         cap = cv2.VideoCapture(self.tk.video)
         pos, cur = -1, None
@@ -534,7 +536,7 @@ class Renderer:
             w(fr.tobytes())
             last = fr
             n += 1
-        end = self.card("end", int(FPS * 3.2))
+        end = self.card("end", int(FPS * END_S))
         for i, t in enumerate(end):
             k = min(1.0, i / (FPS * 0.35))
             w((last * (1 - k) + t * k).astype(np.uint8).tobytes() if k < 1 else t.tobytes())

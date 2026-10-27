@@ -1,7 +1,8 @@
 name: voice
 on:
   push:
-    branches: [voice]
+    branches: [voice, demo]
+    paths: ['demo/voice/lines.json', 'demo/voice/generate.py', '.github/workflows/voice.yml']
 
 permissions:
   contents: write

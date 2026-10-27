@@ -2,6 +2,7 @@ name: demo
 on:
   push:
     branches: [demo]
+    paths-ignore: ['demo/voice/**', 'demo/edit.py', 'docs/**', '.github/workflows/voice.yml']
   workflow_dispatch:
 
 permissions:
