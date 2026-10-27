@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod annot;
 mod config;
 mod geom;
 mod gifenc;

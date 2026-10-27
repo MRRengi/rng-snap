@@ -22,6 +22,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 static TARGET: AtomicIsize = AtomicIsize::new(0);
 static OVERLAY: AtomicIsize = AtomicIsize::new(0);
 static THREAD: AtomicU32 = AtomicU32::new(0);
+/// While typing text on the overlay every key goes to it untouched.
+static PASS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static HOTKEY: OnceLock<Hotkey> = OnceLock::new();
 
 /// A held key repeats every few tens of ms; silence this long means the
@@ -82,7 +84,7 @@ unsafe extern "system" fn proc_(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
             }
         }
-        if !swallow && overlay != 0 && overlay_key(vk) {
+        if !swallow && overlay != 0 && !PASS.load(Ordering::Acquire) && overlay_key(vk) {
             if is_down {
                 post(overlay, WM_APP_KEY, vk as usize, down(VK_SHIFT) as isize);
             }
@@ -115,7 +117,14 @@ pub fn install(target: HWND, hotkey: Hotkey) -> bool {
     rx.recv().unwrap_or(false)
 }
 
+pub fn set_passthrough(on: bool) {
+    PASS.store(on, Ordering::Release);
+}
+
 pub fn set_overlay(hwnd: Option<HWND>) {
+    if hwnd.is_none() {
+        PASS.store(false, Ordering::Release);
+    }
     OVERLAY.store(hwnd.map(|h| h.0 as isize).unwrap_or(0), Ordering::Release);
 }
 

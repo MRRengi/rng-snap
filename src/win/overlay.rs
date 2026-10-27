@@ -9,6 +9,10 @@ use crate::geom::{Point, Rect};
 use crate::image::{Frame, hex_color};
 use crate::select::{Key, Outcome, Selection};
 use super::elements::{Elements, Query};
+use super::toolstrip::{Btn, Slot, Strip, StripState};
+use crate::annot::edit::{Canvas, Change, Key as AKey};
+use crate::annot::render::{self as arender, bbox};
+use crate::annot::{BlurMode, Color, Item, P, PALETTE, Tool};
 use super::util::log;
 use super::WM_APP_ELEMENTS;
 use std::sync::Arc;
@@ -69,8 +73,46 @@ pub enum Event {
     ResMenu(Point),
     ToggleSound,
     ToggleMic,
+    /// Finish and also save the file.
+    ConfirmSave(Rect),
+    /// Finish into the editor window.
+    OpenEditor(Rect),
+    /// Colour / thickness picked on the strip: remember them.
+    Style(Color, usize),
 }
 
+/// Quick annotation mode (frame released with Ctrl held).
+struct Quick {
+    canvas: Canvas,
+    base: tiny_skia::Pixmap,
+    cache: Option<(u64, Rect, ID2D1Bitmap)>,
+    strip: Strip,
+    palette: Option<Strip>,
+    dragging: bool,
+}
+
+const QUICK_SLOTS: [Slot; 18] = [
+    Slot::B(Btn::Tool(Tool::Select)),
+    Slot::B(Btn::Tool(Tool::Arrow)),
+    Slot::B(Btn::Tool(Tool::Line)),
+    Slot::B(Btn::Tool(Tool::Rect)),
+    Slot::B(Btn::Tool(Tool::Ellipse)),
+    Slot::B(Btn::Tool(Tool::Pen)),
+    Slot::B(Btn::Tool(Tool::Highlighter)),
+    Slot::B(Btn::Tool(Tool::Text)),
+    Slot::B(Btn::Tool(Tool::Blur)),
+    Slot::B(Btn::Tool(Tool::Step)),
+    Slot::Sep,
+    Slot::B(Btn::Palette),
+    Slot::B(Btn::WidthCycle),
+    Slot::B(Btn::Undo),
+    Slot::Sep,
+    Slot::B(Btn::Copy),
+    Slot::B(Btn::Save),
+    Slot::B(Btn::OpenEditor),
+];
+
+#[derive(Clone)]
 struct Fonts {
     ui: IDWriteTextFormat,
     small: IDWriteTextFormat,
@@ -91,6 +133,10 @@ pub struct Overlay {
     /// Last point sent to the element worker.
     asked: Option<Point>,
     debug: bool,
+    quick: Option<Quick>,
+    gfx: Option<Gfx>,
+    /// Colour and thickness for quick marks.
+    pub style: (Color, usize),
     vd: Rect,
     sel: Option<Selection>,
     /// Monitor (desktop coords) where the panel sits, and its UI scale.
@@ -146,6 +192,9 @@ impl Overlay {
             capture: 0,
             asked: None,
             debug: std::env::var_os("RENGI_SNAP_DEBUG").is_some(),
+            quick: None,
+            gfx: None,
+            style: (PALETTE[0], 1),
             vd: Rect::default(),
             sel: None,
             monitor: Rect::default(),
@@ -210,6 +259,8 @@ impl Overlay {
         self.loupe = loupe;
         self.folder_label = folder_label;
         self.state = state;
+        self.quick = None;
+        self.gfx = Some(gfx.clone());
         let tol = (6.0 * scale).round() as i32;
         self.windows = windows.iter().map(|(h, r)| (*h, r.intersect(&vd))).filter(|(_, r)| !r.is_empty()).collect();
         let mut sel = Selection::new(vd, self.windows.iter().map(|w| w.1).collect(), monitors, tol);
@@ -254,6 +305,8 @@ impl Overlay {
     }
 
     pub fn hide(&mut self) {
+        self.quick = None;
+        super::hook::set_passthrough(false);
         self.sel = None;
         self.windows.clear();
         self.bmp = None;
@@ -331,6 +384,11 @@ impl Overlay {
                 }
                 _ => (None, None),
             };
+        }
+        if self.quick.is_some() {
+            if let Some(r) = self.quick_handle(msg, wp, lp) {
+                return r;
+            }
         }
         match msg {
             WM_PAINT => {
@@ -463,6 +521,7 @@ impl Overlay {
         if self.debug && matches!(out, Outcome::Confirm(_) | Outcome::Cancel) {
             log(&format!("outcome {out:?}"));
         }
+        self.sync_quick();
         match out {
             Outcome::Confirm(r) => Some(Event::Confirm(r)),
             Outcome::Cancel => Some(Event::Cancel),
@@ -471,6 +530,340 @@ impl Overlay {
                 None
             }
             Outcome::Nothing => None,
+        }
+    }
+
+    fn to_local(&self, p: Point) -> P {
+        P::new((p.x - self.vd.left) as f32, (p.y - self.vd.top) as f32)
+    }
+
+    fn frame_rect(&self) -> Option<Rect> {
+        let sel = self.sel.as_ref()?;
+        if sel.is_editing() { sel.view().frame } else { None }
+    }
+
+    /// Starts quick mode when the frame is being edited, keeps it in step with
+    /// the frame, drops it when the frame is gone.
+    fn sync_quick(&mut self) {
+        let Some(fr) = self.frame_rect() else {
+            if self.quick.as_ref().is_some_and(|q| q.canvas.items.is_empty()) || self.sel.as_ref().is_some_and(|s| !s.is_editing()) {
+                self.quick = None;
+                super::hook::set_passthrough(false);
+            }
+            return;
+        };
+        let lf = Rect::new(fr.left - self.vd.left, fr.top - self.vd.top, fr.right - self.vd.left, fr.bottom - self.vd.top);
+        if self.quick.is_none() {
+            let Some(frame) = self.frame.clone() else { return };
+            let mut canvas = Canvas::new(lf, self.scale, crate::annot::font::shared());
+            canvas.tool = Tool::Select;
+            canvas.color = self.style.0;
+            canvas.width_idx = self.style.1;
+            self.quick = Some(Quick { canvas, base: arender::base_pixmap(&frame), cache: None, strip: Strip::new(), palette: None, dragging: false });
+        }
+        let s = self.scale;
+        let mon = monitor_at(Point::new(fr.left + fr.width() / 2, fr.top + fr.height() / 2)).0;
+        let Some(gfx) = self.gfx.clone() else { return };
+        let q = self.quick.as_mut().unwrap();
+        q.canvas.bounds = lf;
+        let h = (44.0 * s).round() as i32;
+        q.strip.layout(&gfx, &QUICK_SLOTS, Point::new(0, 0), h, 0, s);
+        let (w, gap) = (q.strip.rect.width(), (10.0 * s) as i32);
+        let x = (fr.left + fr.width() / 2 - w / 2).clamp(mon.left + gap, (mon.right - w - gap).max(mon.left + gap));
+        let y = if fr.bottom + gap + h <= mon.bottom {
+            fr.bottom + gap
+        } else if fr.top - gap - h >= mon.top {
+            fr.top - gap - h
+        } else {
+            fr.bottom - h - gap
+        };
+        q.strip.translate(x, y);
+        if q.palette.is_some() {
+            let mut pal = Strip::new();
+            let slots: Vec<Slot> = (0..8).map(|i| Slot::B(Btn::Color(i))).collect();
+            pal.layout(&gfx, &slots, Point::new(0, 0), (40.0 * s) as i32, 0, s);
+            let anchor = q.strip.items.iter().find(|(b, _)| *b == Btn::Palette).map(|(_, r)| *r).unwrap_or(q.strip.rect);
+            let py = if y >= fr.bottom { q.strip.rect.bottom + 6 } else { q.strip.rect.top - 6 - pal.rect.height() };
+            pal.translate(anchor.left - (8.0 * s) as i32, py);
+            q.palette = Some(pal);
+        }
+        self.invalidate();
+    }
+
+    fn quick_state(&self) -> Option<StripState> {
+        let c = &self.quick.as_ref()?.canvas;
+        Some(StripState { tool: c.tool, color: c.color, width_idx: c.width_idx, blur_mode: c.blur_mode, can_undo: c.can_undo(), can_redo: c.can_redo(), custom: c.color })
+    }
+
+    fn quick_change(&mut self, c: Change) {
+        let typing = self.quick.as_ref().is_some_and(|q| q.canvas.text.is_some());
+        super::hook::set_passthrough(typing);
+        if c != Change::None {
+            self.invalidate();
+        }
+    }
+
+    /// Items translated to `rect`-local coordinates (rect in desktop coords).
+    pub fn take_items(&mut self, rect: Rect) -> Vec<Item> {
+        let Some(q) = self.quick.as_mut() else { return Vec::new() };
+        let _ = q.canvas.finish_text();
+        let (dx, dy) = ((rect.left - self.vd.left) as f32, (rect.top - self.vd.top) as f32);
+        q.canvas
+            .items
+            .iter()
+            .cloned()
+            .map(|mut it| {
+                it.translate(-dx, -dy);
+                it
+            })
+            .collect()
+    }
+
+    fn quick_button(&mut self, b: Btn) -> Option<Event> {
+        let fr = self.frame_rect()?;
+        let q = self.quick.as_mut()?;
+        let c = match b {
+            Btn::Tool(t) => q.canvas.set_tool(t),
+            Btn::Palette => {
+                q.palette = if q.palette.is_some() { None } else { Some(Strip::new()) };
+                self.sync_quick();
+                return None;
+            }
+            Btn::Color(i) => {
+                q.palette = None;
+                let ch = q.canvas.set_color(PALETTE[i]);
+                let style = (q.canvas.color, q.canvas.width_idx);
+                self.style = style;
+                self.quick_change(ch);
+                self.sync_quick();
+                return Some(Event::Style(style.0, style.1));
+            }
+            Btn::WidthCycle => {
+                let ch = q.canvas.set_width((q.canvas.width_idx + 1) % 3);
+                let style = (q.canvas.color, q.canvas.width_idx);
+                self.style = style;
+                self.quick_change(ch);
+                return Some(Event::Style(style.0, style.1));
+            }
+            Btn::BlurMode => {
+                let m = if q.canvas.blur_mode == BlurMode::Blur { BlurMode::Pixelate } else { BlurMode::Blur };
+                q.canvas.set_blur_mode(m)
+            }
+            Btn::Undo => q.canvas.key(AKey::Undo),
+            Btn::Copy => return Some(Event::Confirm(fr)),
+            Btn::Save => return Some(Event::ConfirmSave(fr)),
+            Btn::OpenEditor => return Some(Event::OpenEditor(fr)),
+            _ => Change::None,
+        };
+        self.quick_change(c);
+        self.invalidate();
+        None
+    }
+
+    /// Quick-mode input. `None` = not handled here, fall through.
+    fn quick_handle(&mut self, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<(Option<LRESULT>, Option<Event>)> {
+        let handled = |e: Option<Event>| Some((Some(LRESULT(0)), e));
+        let fr = self.frame_rect()?;
+        match msg {
+            WM_MOUSEMOVE => {
+                let p = self.to_desktop(lparam_point(lp.0));
+                let lp_ = self.to_local(p);
+                let shift = wp.0 & 0x0004 != 0;
+                let q = self.quick.as_mut()?;
+                let hov = q.palette.as_ref().and_then(|s| s.hit(p)).or_else(|| q.strip.hit(p));
+                let mut redraw = false;
+                if hov != q.strip.hover {
+                    q.strip.hover = hov;
+                    if let Some(pal) = &mut q.palette {
+                        pal.hover = hov;
+                    }
+                    redraw = true;
+                }
+                if q.dragging {
+                    let c = q.canvas.mouse_move(lp_, shift);
+                    self.quick_change(c);
+                    return handled(None);
+                }
+                if redraw {
+                    self.invalidate();
+                }
+                None
+            }
+            WM_LBUTTONDOWN => {
+                let p = self.to_desktop(lparam_point(lp.0));
+                let lp_ = self.to_local(p);
+                let shift = wp.0 & 0x0004 != 0;
+                let q = self.quick.as_mut()?;
+                if let Some(b) = q.palette.as_ref().and_then(|s| s.hit(p)).or_else(|| q.strip.hit(p)) {
+                    q.strip.press = Some(b);
+                    unsafe {
+                        SetCapture(self.hwnd);
+                    }
+                    self.invalidate();
+                    return handled(None);
+                }
+                if q.strip.rect.contains(p) || q.palette.as_ref().is_some_and(|s| s.rect.contains(p)) {
+                    return handled(None);
+                }
+                let typing = q.canvas.text.is_some();
+                let tool = q.canvas.tool;
+                let on_mark = tool == Tool::Select && q.canvas.wants(lp_);
+                if typing || on_mark || (tool != Tool::Select && fr.contains(p)) {
+                    q.dragging = true;
+                    unsafe {
+                        SetCapture(self.hwnd);
+                    }
+                    let c = q.canvas.mouse_down(lp_, shift);
+                    self.quick_change(c);
+                    return handled(None);
+                }
+                if tool != Tool::Select {
+                    return handled(None);
+                }
+                // Select tool off the marks: the frame itself. With marks on
+                // it, a click outside must not throw them away.
+                let near_frame = self.sel.as_ref().and_then(|s| s.hit(p)).is_some();
+                if !near_frame && !q.canvas.items.is_empty() {
+                    return handled(None);
+                }
+                None
+            }
+            WM_LBUTTONUP => {
+                let p = self.to_desktop(lparam_point(lp.0));
+                let lp_ = self.to_local(p);
+                let shift = wp.0 & 0x0004 != 0;
+                let q = self.quick.as_mut()?;
+                if let Some(pressed) = q.strip.press.take() {
+                    unsafe {
+                        let _ = ReleaseCapture();
+                    }
+                    self.invalidate();
+                    let q = self.quick.as_ref()?;
+                    let over = q.palette.as_ref().and_then(|s| s.hit(p)).or_else(|| q.strip.hit(p));
+                    if over == Some(pressed) {
+                        let e = self.quick_button(pressed);
+                        return handled(e);
+                    }
+                    return handled(None);
+                }
+                if q.dragging {
+                    q.dragging = false;
+                    unsafe {
+                        let _ = ReleaseCapture();
+                    }
+                    let c = q.canvas.mouse_up(lp_, shift);
+                    self.quick_change(c);
+                    return handled(None);
+                }
+                None
+            }
+            WM_LBUTTONDBLCLK => {
+                let p = self.to_desktop(lparam_point(lp.0));
+                let lp_ = self.to_local(p);
+                let q = self.quick.as_mut()?;
+                if q.strip.rect.contains(p) {
+                    return handled(None);
+                }
+                let is_text = q.canvas.hit(lp_).is_some_and(|i| matches!(q.canvas.items[i].shape, crate::annot::Shape::Text { .. }));
+                if is_text && matches!(q.canvas.tool, Tool::Select | Tool::Text) {
+                    let c = q.canvas.double_click(lp_);
+                    self.quick_change(c);
+                    return handled(None);
+                }
+                if q.canvas.tool != Tool::Select {
+                    return handled(None);
+                }
+                None
+            }
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                let vk = VIRTUAL_KEY(wp.0 as u16);
+                let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
+                let q = self.quick.as_mut()?;
+                let typing = q.canvas.text.is_some();
+                let c = match vk {
+                    VK_Z if ctrl => q.canvas.key(AKey::Undo),
+                    VK_Y if ctrl => q.canvas.key(AKey::Redo),
+                    VK_DELETE => q.canvas.key(AKey::Delete),
+                    VK_BACK => q.canvas.key(AKey::Backspace),
+                    VK_ESCAPE if typing => q.canvas.key(AKey::Escape),
+                    VK_RETURN if typing => q.canvas.key(AKey::Enter),
+                    _ if !typing && !ctrl => {
+                        let ch = char::from_u32(vk.0 as u32).unwrap_or('\0');
+                        match Tool::from_key(ch) {
+                            Some(t) if t != Tool::Crop => q.canvas.set_tool(t),
+                            _ => return None,
+                        }
+                    }
+                    _ => return None,
+                };
+                self.quick_change(c);
+                self.invalidate();
+                handled(None)
+            }
+            WM_CHAR => {
+                let q = self.quick.as_mut()?;
+                if q.canvas.text.is_none() {
+                    return None;
+                }
+                let c = char::from_u32(wp.0 as u32).map(|ch| q.canvas.char(ch)).unwrap_or(Change::None);
+                self.quick_change(c);
+                handled(None)
+            }
+            WM_APP_KEY => {
+                let vk = VIRTUAL_KEY(wp.0 as u16);
+                let q = self.quick.as_mut()?;
+                match vk {
+                    VK_ESCAPE if q.canvas.is_busy() || q.canvas.selected.is_some() || q.palette.is_some() => {
+                        q.palette = None;
+                        let c = q.canvas.key(AKey::Escape);
+                        self.quick_change(c);
+                        self.invalidate();
+                        handled(None)
+                    }
+                    VK_C => handled(None),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    unsafe fn draw_quick(&mut self, rt: &ID2D1RenderTarget) {
+        let Some(st) = self.quick_state() else { return };
+        let Some(gfx) = self.gfx.clone() else { return };
+        let (vx, vy) = (self.vd.left, self.vd.top);
+        let s = self.scale;
+        let q = self.quick.as_mut().unwrap();
+        // Selection box, handles, text box and caret (image coords = vd-local).
+        if let (Ok(acc), Ok(white)) = (d2d::brush(rt, rgba(ACCENT, 1.0)), d2d::brush(rt, rgba(0xFFFFFF, 1.0))) {
+            let c = &q.canvas;
+            if let Some(it) = c.selected.and_then(|i| c.items.get(i)) {
+                let (l, t, r, b) = bbox(it, c.fonts());
+                unsafe { rt.DrawRectangle(&rect_f(l - 2.0, t - 2.0, r + 2.0, b + 2.0), &acc, 1.0, None) };
+                for (_, hp) in c.handles() {
+                    let hs = 4.5 * s;
+                    let rr = rect_f(hp.x - hs, hp.y - hs, hp.x + hs, hp.y + hs);
+                    unsafe {
+                        rt.FillRectangle(&rr, &white);
+                        rt.DrawRectangle(&rr, &acc, 1.0, None);
+                    }
+                }
+            }
+            if let (Some(t), Some(f)) = (&c.text, c.fonts()) {
+                let (l, tp, r, b) = crate::annot::font::text_box(&f.text, t.size, &t.text, t.at.x, t.at.y);
+                unsafe { rt.DrawRectangle(&rect_f(l - 4.0, tp - 3.0, r + 4.0, b + 3.0), &acc, 1.0, None) };
+                let last = t.text.split('\n').last().unwrap_or("");
+                let lines = t.text.split('\n').count().max(1) as f32;
+                let lh = crate::annot::font::line_height(&f.text, t.size);
+                let cx = t.at.x + crate::annot::font::line_width(&f.text, t.size, last);
+                let cy = t.at.y + lh * (lines - 1.0);
+                unsafe { rt.FillRectangle(&rect_f(cx + 1.0, cy + 2.0, cx + 1.0 + 1.5 * s, cy + lh - 2.0), &acc) };
+            }
+        }
+        let off = (-vx as f32, -vy as f32);
+        q.strip.draw(rt, &gfx, &st, off, true);
+        if let Some(pal) = &mut q.palette {
+            pal.draw(rt, &gfx, &st, off, true);
         }
     }
 
@@ -497,8 +890,23 @@ impl Overlay {
             let _ = GetCursorPos(&mut cur);
         }
         let p = Point::new(cur.x, cur.y);
+        let quick_cursor = self.quick.as_ref().map(|q| {
+            if q.strip.rect.contains(p) || q.palette.as_ref().is_some_and(|s| s.rect.contains(p)) {
+                IDC_HAND
+            } else {
+                let lp_ = P::new((p.x - self.vd.left) as f32, (p.y - self.vd.top) as f32);
+                match q.canvas.tool {
+                    Tool::Select if q.canvas.wants(lp_) => IDC_SIZEALL,
+                    Tool::Select => IDC_ARROW,
+                    Tool::Text => IDC_IBEAM,
+                    _ => IDC_CROSS,
+                }
+            }
+        });
         let id = if self.panel_rect.contains(p) {
             if self.panel_item_at(p).is_none() { IDC_ARROW } else { IDC_HAND }
+        } else if let Some(c) = quick_cursor.filter(|c| *c != IDC_ARROW) {
+            c
         } else {
             match self.sel.as_ref().and_then(|s| s.hit(p)) {
                 Some(e) if (e.left && e.top) || (e.right && e.bottom) => IDC_SIZENWSE,
@@ -527,7 +935,8 @@ impl Overlay {
 
     fn render(&mut self) {
         let (Some(rt), Some(bmp), Some(sel)) = (self.rt.clone(), self.bmp.clone(), self.sel.as_ref()) else { return };
-        let Some((_, fonts)) = &self.fonts else { return };
+        let Some(fonts) = self.fonts.as_ref().map(|f| f.1.clone()) else { return };
+        let fonts = &fonts;
         let s = self.scale;
         let view = sel.view();
         let pos = sel.pos();
@@ -555,6 +964,26 @@ impl Overlay {
                         }
                     }
                     None => rt.FillRectangle(&full, dim),
+                }
+            }
+            if let (Some(fr), Some(q)) = (view.frame, self.quick.as_mut()) {
+                let lf = Rect::new(fr.left - self.vd.left, fr.top - self.vd.top, fr.right - self.vd.left, fr.bottom - self.vd.top);
+                let fresh = matches!(&q.cache, Some((v, r, _)) if *v == q.canvas.version && *r == lf);
+                if !fresh {
+                    let items = q.canvas.preview();
+                    if items.is_empty() {
+                        q.cache = None;
+                    } else {
+                        let pm = arender::render(&q.base, &items, lf, q.canvas.fonts(), s);
+                        let fr2 = arender::to_frame(&pm);
+                        if let Ok(b) = d2d::bitmap(rt1, fr2.width() as u32, fr2.height() as u32, &fr2.pixels) {
+                            q.cache = Some((q.canvas.version, lf, b));
+                        }
+                    }
+                }
+                if let Some((_, _, b)) = &q.cache {
+                    let d = rect_f(lf.left as f32, lf.top as f32, lf.right as f32, lf.bottom as f32);
+                    rt.DrawBitmap(b, Some(&d), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None);
                 }
             }
             if let (Some(fr), Some(accent)) = (view.frame, &accent) {
@@ -587,7 +1016,8 @@ impl Overlay {
                 }
             }
             self.draw_panel(rt1, fonts);
-            if self.loupe && !self.panel_rect.contains(pos) {
+            self.draw_quick(rt1);
+            if self.loupe && self.quick.is_none() && !self.panel_rect.contains(pos) {
                 self.draw_loupe(rt1, &bmp, fonts, pos, view.frame);
             }
             let _ = rt.EndDraw(None, None);

@@ -9,6 +9,7 @@ use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::core::{BOOL, HSTRING, Interface, Result, w};
 
+#[derive(Clone)]
 pub struct Gfx {
     pub d2d: ID2D1Factory1,
     pub dw: IDWriteFactory,
@@ -131,6 +132,22 @@ pub fn bitmap(rt: &ID2D1RenderTarget, w: u32, h: u32, pixels: &[u8]) -> Result<I
             dpiY: 96.0,
         };
         rt.CreateBitmap(D2D_SIZE_U { width: w, height: h }, Some(pixels.as_ptr() as *const _), w * 4, &props)
+    }
+}
+
+/// Bitmap from a tiny-skia pixmap (RGBA premultiplied), keeping alpha.
+pub fn bitmap_from_pixmap(rt: &ID2D1RenderTarget, p: &tiny_skia::Pixmap) -> Result<ID2D1Bitmap> {
+    let mut bgra = Vec::with_capacity(p.data().len());
+    for c in p.data().chunks_exact(4) {
+        bgra.extend_from_slice(&[c[2], c[1], c[0], c[3]]);
+    }
+    unsafe {
+        let props = D2D1_BITMAP_PROPERTIES {
+            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+            dpiX: 96.0,
+            dpiY: 96.0,
+        };
+        rt.CreateBitmap(D2D_SIZE_U { width: p.width(), height: p.height() }, Some(bgra.as_ptr() as *const _), p.width() * 4, &props)
     }
 }
 

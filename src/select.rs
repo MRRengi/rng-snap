@@ -110,6 +110,10 @@ impl Selection {
         self.windows.iter().position(|r| r.contains(p))
     }
 
+    pub fn is_editing(&self) -> bool {
+        matches!(self.state, State::Editing { .. })
+    }
+
     pub fn is_hovering(&self) -> bool {
         matches!(self.state, State::Hover)
     }

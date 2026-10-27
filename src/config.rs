@@ -47,6 +47,10 @@ pub struct Config {
     pub video_res: String,
     pub system_audio: bool,
     pub mic: bool,
+    /// Editor: last tool name, colour (0xRRGGBB) and thickness (0..2).
+    pub ed_tool: String,
+    pub ed_color: u32,
+    pub ed_width: u32,
 }
 
 impl Default for Config {
@@ -63,6 +67,9 @@ impl Default for Config {
             video_res: "original".into(),
             system_audio: false,
             mic: false,
+            ed_tool: "Arrow".into(),
+            ed_color: 0xE5484D,
+            ed_width: 1,
         }
     }
 }
@@ -96,6 +103,9 @@ impl Config {
         get(&t, "video_res", &mut c.video_res);
         get(&t, "system_audio", &mut c.system_audio);
         get(&t, "mic", &mut c.mic);
+        get(&t, "ed_tool", &mut c.ed_tool);
+        get(&t, "ed_color", &mut c.ed_color);
+        get(&t, "ed_width", &mut c.ed_width);
         c.sanitize();
         c
     }
@@ -110,6 +120,10 @@ impl Config {
         }
         if self.card_seconds > 600 {
             self.card_seconds = 600;
+        }
+        self.ed_color &= 0xFF_FFFF;
+        if self.ed_width > 2 {
+            self.ed_width = 1;
         }
         if self.mode != "video" {
             self.mode = "photo".into();

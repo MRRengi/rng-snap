@@ -105,6 +105,50 @@ mod e2e {
         visible(w!("RengiSnapOverlay"))
     }
 
+    fn type_text(s: &str) {
+        for ch in s.encode_utf16() {
+            for up in [false, true] {
+                let input = INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wScan: ch,
+                            dwFlags: if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
+                            ..Default::default()
+                        },
+                    },
+                };
+                unsafe {
+                    SendInput(&[input], size_of::<INPUT>() as i32);
+                }
+                sleep(10);
+            }
+        }
+    }
+
+    fn ctrl_tap(vk: VIRTUAL_KEY) {
+        key(VK_CONTROL, false);
+        sleep(20);
+        tap(vk);
+        sleep(20);
+        key(VK_CONTROL, true);
+    }
+
+    fn reds(f: &Frame) -> usize {
+        f.pixels.chunks_exact(4).filter(|p| p[2] > 190 && p[1] < 110 && p[0] < 110).count()
+    }
+
+    /// Client rect of a window in screen coordinates.
+    fn client_screen(h: HWND) -> Rect {
+        let mut r = RECT::default();
+        let mut o = POINT::default();
+        unsafe {
+            let _ = GetClientRect(h, &mut r);
+            let _ = ClientToScreen(h, &mut o);
+        }
+        Rect::from_xywh(o.x, o.y, r.right, r.bottom)
+    }
+
     fn key(vk: VIRTUAL_KEY, up: bool) {
         let input = INPUT {
             r#type: INPUT_KEYBOARD,
@@ -965,6 +1009,117 @@ mod e2e {
             rep.check("H Esc closes the folder menu and then the overlay", wait(2000, || !overlay_visible()), "");
         }
         close_overlay_if_open();
+
+        // Q: quick marks on the overlay (Ctrl-release, A, drag an arrow, Enter).
+        let pc = PAINT_CARD.offset(PAINT.left, PAINT.top);
+        let s0 = seq();
+        if open_overlay().is_some() {
+            key(VK_CONTROL, false);
+            drag_to((pc.left, pc.top), (pc.right, pc.bottom));
+            sleep(60);
+            key(VK_CONTROL, true);
+            sleep(300);
+            tap(VK_A);
+            sleep(150);
+            drag_to((pc.left + 40, pc.bottom - 40), (pc.right - 60, pc.top + 50));
+            sleep(250);
+            screenshot(&rep.dir, "q1-quick-strip");
+            rep.check("Q drawing does not finish the capture", seq() == s0 && overlay_visible(), "");
+            tap(VK_RETURN);
+            let got = wait(4000, || seq() != s0);
+            rep.check("Q Enter finishes with marks", got, "");
+            match clip_image() {
+                Some(img) => {
+                    let ok = img.width() as i32 == pc.width() && img.height() as i32 == pc.height();
+                    rep.check("Q clipboard is the frame size", ok, &format!("{}x{}", img.width(), img.height()));
+                    let n = reds(&img);
+                    rep.check("Q the arrow is in the image", n > 300, &format!("{n} red pixels"));
+                    let _ = std::fs::write(rep.dir.join("q2-clipboard.png"), img.encode_png());
+                }
+                None => rep.check("Q clipboard has an image", false, ""),
+            }
+        } else {
+            rep.check("Q hotkey opens overlay", false, "");
+        }
+        close_overlay_if_open();
+
+        // E: editor from the card's Edit button.
+        if wait(2000, || visible(w!("RengiSnapCard"))) {
+            let card = window_rect(find(w!("RengiSnapCard")).unwrap().0 as isize);
+            click_at(card.left + 10 + 64 * 4 + 32, card.bottom - 29);
+            let opened = wait(4000, || visible(w!("RengiSnapEditor")));
+            rep.check("E Edit opens the editor", opened, "");
+            if opened {
+                sleep(700);
+                let ed = find(w!("RengiSnapEditor")).unwrap();
+                let cl = client_screen(ed);
+                let bar = 52;
+                let (iw, ih) = (pc.width(), pc.height());
+                let ox = cl.left + (cl.width() - iw) / 2;
+                let oy = cl.top + bar + (cl.height() - bar - ih) / 2;
+                rep.line(&format!("editor client {cl:?}, image at ({ox},{oy})"));
+                let step = |rep: &mut Report, name: &str, act: &dyn Fn()| -> Option<Frame> {
+                    let s0 = seq();
+                    act();
+                    let ok = wait(3000, || seq() != s0);
+                    rep.check(name, ok, "");
+                    sleep(100);
+                    clip_image()
+                };
+                // The marks from the overlay came along (editable): the image still has the arrow.
+                let img = step(&mut rep, "E rectangle copies by itself", &|| {
+                    tap(VK_R);
+                    sleep(100);
+                    drag_to((ox + 30, oy + 30), (ox + 140, oy + 110));
+                });
+                if let Some(i) = &img {
+                    rep.check("E rectangle in the image", reds(i) > 600, &format!("{} red", reds(i)));
+                }
+                step(&mut rep, "E step copies by itself", &|| {
+                    tap(VK_N);
+                    sleep(100);
+                    click_at(ox + 200, oy + 60);
+                });
+                step(&mut rep, "E blur copies by itself", &|| {
+                    tap(VK_B);
+                    sleep(100);
+                    drag_to((ox + 150, oy + 120), (ox + 280, oy + 180));
+                });
+                step(&mut rep, "E text copies by itself", &|| {
+                    tap(VK_T);
+                    sleep(100);
+                    click_at(ox + 40, oy + 160);
+                    sleep(150);
+                    type_text("Hi there");
+                    tap(VK_ESCAPE);
+                });
+                sleep(300);
+                screenshot(&rep.dir, "e1-editor");
+                let img = step(&mut rep, "E crop copies by itself", &|| {
+                    tap(VK_C);
+                    sleep(100);
+                    drag_to((ox + 20, oy + 20), (ox + 220, oy + 140));
+                    sleep(100);
+                    tap(VK_RETURN);
+                });
+                let crop_ok = img.as_ref().is_some_and(|i| (i.width() as i32 - 200).abs() <= 2 && (i.height() as i32 - 120).abs() <= 2);
+                rep.check("E crop gives the cropped size", crop_ok, &format!("{:?}", img.as_ref().map(|i| (i.width(), i.height()))));
+                sleep(200);
+                screenshot(&rep.dir, "e2-editor-cropped");
+                let img = step(&mut rep, "E Ctrl+Z copies by itself", &|| ctrl_tap(VK_Z));
+                let undo_ok = img.as_ref().is_some_and(|i| i.width() as i32 == iw && i.height() as i32 == ih);
+                rep.check("E undo restores the full size", undo_ok, &format!("{:?}", img.as_ref().map(|i| (i.width(), i.height()))));
+                let pngs = files_with("png").len();
+                ctrl_tap(VK_S);
+                rep.check("E Ctrl+S saves a PNG", wait(3000, || files_with("png").len() > pngs), "");
+                unsafe {
+                    let _ = PostMessageW(Some(ed), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+                rep.check("E editor closes", wait(3000, || find(w!("RengiSnapEditor")).is_none()), "");
+            }
+        } else {
+            rep.check("E card shows after quick capture", false, "");
+        }
 
         // V: video.
         // V1: switch the panel to Video by clicking it, then drag over the animated window at 60 fps.

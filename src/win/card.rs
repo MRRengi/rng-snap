@@ -226,7 +226,7 @@ impl Card {
                 (Some(LRESULT(0)), None)
             }
             WM_SETCURSOR => {
-                let id = if self.hover.is_some() && self.hover != Some(Button::Edit) { IDC_HAND } else { IDC_ARROW };
+                let id = if self.hover.is_some() { IDC_HAND } else { IDC_ARROW };
                 unsafe {
                     if let Ok(c) = LoadCursorW(None, id) {
                         SetCursor(Some(c));
@@ -273,7 +273,7 @@ impl Card {
                 let pressed = self.press.take();
                 self.invalidate();
                 match (pressed, self.button_at(p)) {
-                    (Some(a), Some(b)) if a == b && a != Button::Edit => {
+                    (Some(a), Some(b)) if a == b => {
                         let r = self.buttons.iter().find(|(x, _)| *x == a).map(|(_, r)| *r).unwrap_or_default();
                         let mut origin = POINT::default();
                         unsafe {
@@ -359,7 +359,7 @@ impl Card {
                 };
                 let lr = Self::f(*r);
                 let inset = rect_f(lr.left + 2.0 * s, lr.top + 2.0 * s, lr.right - 2.0 * s, lr.bottom - 2.0 * s);
-                let disabled = *b == Button::Edit;
+                let disabled = false;
                 if !disabled && self.press == Some(*b) {
                     rt.FillRoundedRectangle(&d2d::round_rect(inset, 6.0 * s), &press);
                 } else if !disabled && self.hover == Some(*b) {

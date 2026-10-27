@@ -7,11 +7,13 @@
 
 use super::card::{self, Button, Card};
 use super::d2d::Gfx;
+use super::editor::{self, Editor};
+use crate::annot::{Color, Item, Tool};
 use super::overlay::{self, Overlay, PanelState};
 use super::recbar::{BarButton, RecBar};
 use super::record::{self, Recorder};
 use super::util::log;
-use super::{WM_APP_CAPTURE, WM_APP_GIF, WM_APP_TRAY, class_name, clipboard, files, grab, hook, mp4read, paths, tray, wins};
+use super::{AUTOCOPY_TIMER, WM_APP_CAPTURE, WM_APP_GIF, WM_APP_TRAY, class_name, clipboard, files, grab, hook, mp4read, paths, tray, wins};
 use crate::videoplan::{self, Res};
 use crate::config::Config;
 use crate::geom::{Point, Rect};
@@ -33,7 +35,11 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::w;
 
 struct Last {
+    /// What the user got (with marks).
     frame: Rc<Frame>,
+    /// The bare capture and its marks, so the editor reopens them editable.
+    base: Rc<Frame>,
+    items: Vec<Item>,
     rect: Rect,
     saved: Option<PathBuf>,
 }
@@ -57,6 +63,8 @@ struct App {
     cfg_path: Option<PathBuf>,
     overlay: Overlay,
     card: Card,
+    editor: Option<Editor>,
+    instance: HINSTANCE,
     recbar: RecBar,
     rec: Option<Recording>,
     last: Option<Last>,
@@ -130,6 +138,8 @@ pub fn run() {
             cfg_path,
             overlay,
             card,
+            editor: None,
+            instance,
             recbar,
             rec: None,
             last: None,
@@ -165,6 +175,7 @@ fn register_classes(instance: HINSTANCE) {
             (class_name::OVERLAY, Some(overlay_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DBLCLKS),
             (class_name::CARD, Some(card_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DROPSHADOW),
             (class_name::BAR, Some(bar_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DROPSHADOW),
+            (class_name::EDITOR, Some(editor_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DBLCLKS),
             (class_name::OUTLINE, Some(outline_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), WNDCLASS_STYLES(0)),
         ] {
             let wc = WNDCLASSEXW {
@@ -255,6 +266,7 @@ impl App {
         let (windows, monitors) = wins::snapshot();
         let label = self.folder_label();
         let st = self.panel_state();
+        self.overlay.style = (Color::from_hex(self.cfg.ed_color), self.cfg.ed_width as usize);
         // Route keys before the overlay appears, so an early Esc is not lost.
         hook::set_overlay(Some(self.overlay.hwnd));
         if !self.overlay.show(&self.gfx, Arc::new(frame), windows, monitors, self.cfg.loupe, label, st) {
@@ -278,11 +290,13 @@ impl App {
             self.start_recording(rect);
             return;
         }
+        let items = self.overlay.take_items(rect);
         let Some(full) = self.end_overlay() else { return };
-        let frame = Rc::new(full.crop(rect));
-        if frame.width() == 0 || frame.height() == 0 {
+        let base = Rc::new(full.crop(rect));
+        if base.width() == 0 || base.height() == 0 {
             return;
         }
+        let frame = if items.is_empty() { base.clone() } else { Rc::new(self.render_marks(&base, &items)) };
         let copied = clipboard::put_image(self.msg, &frame);
         CLIP.with(|c| *c.borrow_mut() = copied.then(|| frame.clone()));
         let mut status = if copied { "Copied to clipboard".to_string() } else { "Could not open the clipboard".to_string() };
@@ -298,7 +312,92 @@ impl App {
         }
         self.card.show(&self.gfx, &frame, rect, status, self.cfg.card_seconds, false);
         self.card_video = false;
-        self.last = Some(Last { frame, rect, saved });
+        self.last = Some(Last { frame, base, items, rect, saved });
+    }
+
+    fn render_marks(&self, base: &Frame, items: &[Item]) -> Frame {
+        let pm = crate::annot::render::base_pixmap(base);
+        let fonts = crate::annot::font::shared();
+        let out = crate::annot::render::render(&pm, items, Rect::from_xywh(0, 0, base.width() as i32, base.height() as i32), fonts.as_deref(), self.overlay_scale());
+        crate::annot::render::to_frame(&out)
+    }
+
+    fn overlay_scale(&self) -> f32 {
+        let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem() }.max(96);
+        dpi as f32 / 96.0
+    }
+
+    fn open_editor(&mut self) {
+        let Some(last) = &self.last else { return };
+        let (base, items, near) = (last.base.clone(), last.items.clone(), last.rect);
+        self.card.hide();
+        if let Some(old) = self.editor.take() {
+            unsafe {
+                let _ = DestroyWindow(old.hwnd);
+            }
+        }
+        let style = (Tool::parse(&self.cfg.ed_tool), Color::from_hex(self.cfg.ed_color), self.cfg.ed_width as usize);
+        match Editor::open(self.instance, &self.gfx, &base, items, crate::annot::font::shared(), style, near) {
+            Ok(mut e) => {
+                if let Some(p) = &last_saved(&self.last) {
+                    e.saved_path = Some(p.clone());
+                    e.set_title(&format!("{} - Rengi Snap", file_name(p)));
+                }
+                self.editor = Some(e);
+            }
+            Err(err) => log(&format!("cannot open editor: {err}")),
+        }
+    }
+
+    /// Copies the editor's current image and keeps `last` in step.
+    fn editor_copy(&mut self, status: bool) {
+        let Some(e) = &mut self.editor else { return };
+        let frame = Rc::new(e.final_frame());
+        let ok = clipboard::put_image(self.msg, &frame);
+        CLIP.with(|c| *c.borrow_mut() = ok.then(|| frame.clone()));
+        if status {
+            e.set_status(if ok { "Copied to clipboard".into() } else { "Could not open the clipboard".into() });
+        }
+        let items = e.items();
+        if let Some(last) = &mut self.last {
+            last.frame = frame;
+            last.items = items;
+        }
+    }
+
+    fn editor_save(&mut self, folder: Option<PathBuf>) {
+        let Some(e) = &mut self.editor else { return };
+        let frame = e.final_frame();
+        let target = match (&folder, &e.saved_path) {
+            (None, Some(p)) => Some(p.clone()),
+            _ => None,
+        };
+        let result = match target {
+            Some(p) => std::fs::write(&p, frame.encode_png()).map(|_| p),
+            None => files::save_png(&frame, &folder.unwrap_or_else(|| self.cfg.save_folder(&paths::pictures_dir())), paths::local_stamp()),
+        };
+        match result {
+            Ok(p) => {
+                e.set_status(format!("Saved {}", file_name(&p)));
+                e.set_title(&format!("{} - Rengi Snap", file_name(&p)));
+                e.saved_path = Some(p.clone());
+                if let Some(last) = &mut self.last {
+                    last.saved = Some(p);
+                }
+            }
+            Err(err) => e.set_status(format!("Saving failed: {err}")),
+        }
+    }
+
+    fn remember_style(&mut self, tool: Option<Tool>, color: Color, width: usize) {
+        if let Some(t) = tool {
+            if t != Tool::Crop {
+                self.cfg.ed_tool = t.name().into();
+            }
+        }
+        self.cfg.ed_color = color.hex();
+        self.cfg.ed_width = width as u32;
+        self.save_config();
     }
 
     fn start_recording(&mut self, rect: Rect) {
@@ -505,7 +604,8 @@ impl App {
                 self.card.hide();
             }
             Button::Close => self.card.hide(),
-            Button::SaveTo | Button::Edit | Button::Gif => {}
+            Button::Edit => self.open_editor(),
+            Button::SaveTo | Button::Gif => {}
         }
     }
 }
@@ -548,6 +648,10 @@ fn export_gif(src: PathBuf, frames: u64, notify: isize) {
         let _ = std::fs::remove_file(src.with_extension("gif"));
     }
     post(if result.is_ok() { 1000 } else { 1001 });
+}
+
+fn last_saved(last: &Option<Last>) -> Option<PathBuf> {
+    last.as_ref().and_then(|l| l.saved.clone())
 }
 
 fn file_name(p: &std::path::Path) -> String {
@@ -607,6 +711,22 @@ fn on_overlay_event(ev: overlay::Event) {
             if let Some(owner) = with_app(|a| a.overlay.hwnd) {
                 choose_folder(owner, at);
             }
+        }
+        overlay::Event::ConfirmSave(r) => {
+            with_app(|a| {
+                a.finish(r);
+                let folder = a.current_folder();
+                a.save_last_to(folder);
+            });
+        }
+        overlay::Event::OpenEditor(r) => {
+            with_app(|a| {
+                a.finish(r);
+                a.open_editor();
+            });
+        }
+        overlay::Event::Style(c, w) => {
+            with_app(|a| a.remember_style(None, c, w));
         }
         overlay::Event::Mode(video) => {
             with_app(|a| {
@@ -668,6 +788,103 @@ fn on_card_event(ev: card::Event) {
         return;
     }
     with_app(|a| if video { a.video_card_click(b) } else { a.card_click(b) });
+}
+
+fn on_editor_event(ev: editor::Event) {
+    match ev {
+        editor::Event::Changed => {
+            with_app(|a| unsafe {
+                SetTimer(Some(a.msg), AUTOCOPY_TIMER, 150, None);
+            });
+        }
+        editor::Event::Copy => {
+            with_app(|a| a.editor_copy(true));
+        }
+        editor::Event::Save => {
+            with_app(|a| a.editor_save(None));
+        }
+        editor::Event::SaveTo(at) => {
+            let Some(owner) = with_app(|a| a.editor.as_ref().map(|e| e.hwnd)).flatten() else { return };
+            if let Some(folder) = choose_folder(owner, at) {
+                with_app(|a| a.editor_save(Some(folder)));
+            }
+        }
+        editor::Event::CustomColor => {
+            let Some((owner, start)) = with_app(|a| a.editor.as_ref().map(|e| (e.hwnd, e.custom))).flatten() else { return };
+            if let Some(c) = pick_color(owner, start) {
+                let ev = with_app(|a| {
+                    a.editor.as_mut().and_then(|e| {
+                        e.custom = c;
+                        e.set_color(c)
+                    })
+                })
+                .flatten();
+                if let Some(ev) = ev {
+                    on_editor_event(ev);
+                }
+                with_app(|a| {
+                    if let Some(st) = a.editor.as_ref().map(|e| e.style()) {
+                        a.remember_style(Some(st.0), st.1, st.2);
+                    }
+                });
+            }
+        }
+        editor::Event::Style => {
+            with_app(|a| {
+                if let Some(st) = a.editor.as_ref().map(|e| e.style()) {
+                    a.remember_style(Some(st.0), st.1, st.2);
+                }
+            });
+        }
+    }
+}
+
+/// Windows colour dialog. Runs with no borrow held.
+fn pick_color(owner: HWND, start: Color) -> Option<Color> {
+    use windows::Win32::UI::Controls::Dialogs::{CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW, ChooseColorW};
+    static mut CUSTOM: [COLORREF; 16] = [COLORREF(0x00FFFFFF); 16];
+    let rgb = |c: Color| COLORREF(c.0 as u32 | (c.1 as u32) << 8 | (c.2 as u32) << 16);
+    unsafe {
+        let mut cc = CHOOSECOLORW {
+            lStructSize: size_of::<CHOOSECOLORW>() as u32,
+            hwndOwner: owner,
+            rgbResult: rgb(start),
+            lpCustColors: std::ptr::addr_of_mut!(CUSTOM) as *mut COLORREF,
+            Flags: CC_RGBINIT | CC_FULLOPEN,
+            ..Default::default()
+        };
+        if ChooseColorW(&mut cc).as_bool() {
+            let v = cc.rgbResult.0;
+            Some(Color(v as u8, (v >> 8) as u8, (v >> 16) as u8))
+        } else {
+            None
+        }
+    }
+}
+
+unsafe extern "system" fn editor_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_DESTROY {
+        with_app(|a| {
+            if a.editor.as_ref().is_some_and(|e| e.hwnd == hwnd) {
+                a.editor = None;
+            }
+        });
+        return LRESULT(0);
+    }
+    let r = with_app(|a| {
+        let App { editor, gfx, .. } = a;
+        editor.as_mut().filter(|e| e.hwnd == hwnd).map(|e| e.handle(gfx, msg, wp, lp))
+    })
+    .flatten();
+    if let Some((res, ev)) = r {
+        if let Some(ev) = ev {
+            on_editor_event(ev);
+        }
+        if let Some(res) = res {
+            return res;
+        }
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -747,6 +964,13 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                     _ => {}
                 }
             }
+            return LRESULT(0);
+        }
+        WM_TIMER if wp.0 == AUTOCOPY_TIMER => {
+            unsafe {
+                let _ = KillTimer(Some(hwnd), AUTOCOPY_TIMER);
+            }
+            with_app(|a| a.editor_copy(false));
             return LRESULT(0);
         }
         WM_APP_GIF => {
