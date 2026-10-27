@@ -7,7 +7,7 @@ rengi-snap-16x9.mp4 and rengi-snap-1x1.mp4. The direction (what to cut, where
 the camera goes) lives in DIRECTION below and is anchored to beats, so a new
 take with different timing still edits correctly.
 """
-import bisect, math, subprocess, sys
+import bisect, math, re, subprocess, sys
 from pathlib import Path
 
 import cv2
@@ -41,6 +41,11 @@ class Take:
             p = line.split()
             if p[0] == "viewport":
                 self.vp = tuple(map(int, p[1:5]))
+        self.editor = ((152, 112), 0.892, (105, 76))
+        for line in (d / "demo-log.txt").read_text().splitlines():
+            m = re.match(r"editor client R \{ l: (-?\d+), t: (-?\d+).*zoom ([\d.]+) origin \((-?[\d.]+),(-?[\d.]+)\)", line)
+            if m:
+                self.editor = ((int(m[1]), int(m[2])), float(m[3]), (float(m[4]), float(m[5])))
         self.video = str(d / "demo-raw.mp4")
         out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0", self.video], capture_output=True, text=True).stdout
         self.pts = sorted(float(x) for x in out.split() if x.strip())
@@ -224,13 +229,16 @@ def to_np(im):
 
 
 def direction(tk: Take):
-    """Returns (segments, camera keys, captions, keys) in beat time.
+    """Returns (segments, camera keys, captions, keys, clicks) in beat time.
 
     segments: [(src_start_ms, src_end_ms, speed)] played in order.
     camera: [(ms, (cx, cy, zoom), transition_ms)] in screen pixels; zoom 1 = whole screen.
     """
     vx, vy, vr, vb = tk.vp
     P = lambda x, y: (vx + x, vy + y)
+    ecl, ez, eo = tk.editor
+    # Page point -> where it shows inside the editor (the image starts at page (4,4)).
+    E = lambda x, y: (ecl[0] + eo[0] + (x - 4) * ez, ecl[1] + eo[1] + (y - 4) * ez)
     T = tk.t
     cap = lambda text: T("caption", text)
 
@@ -238,6 +246,8 @@ def direction(tk: Take):
     t_smart = cap("It finds")
     t_wheel = cap("Mouse wheel")
     t_quick = cap("Hold Ctrl")
+    t_r = T("key", "R")
+    t_n = T("key", "N")
     t_enter = T("key", "Enter")
     t_open = cap("Need more")
     t_blur = cap("Blur")
@@ -251,34 +261,37 @@ def direction(tk: Take):
     t_end = tk.end
 
     seg = [
-        (t_freeze - 1600, t_open + 1300, 1.0),
-        (t_open + 1300, t_blur - 300, 1.6),  # editor opening
-        (t_blur - 300, t_clip + 1500, 1.0),
-        (t_clip + 1500, t_video - 200, 2.5),  # editor closing
-        (t_video - 200, t_rec + 300, 1.0),
-        (t_rec + 300, t_saved, 1.0),
-        (t_saved, t_gifc + 300, 1.4),
-        (t_gifc + 300, t_gif, 2.5),  # gif encoding
-        (t_gif, min(t_gif + 1800, t_end), 1.0),
+        (t_freeze - 1100, t_smart, 1.0),
+        (t_smart, t_wheel, 1.6),  # hover tour
+        (t_wheel, t_quick, 1.3),
+        (t_quick, t_enter + 200, 1.3),  # marks
+        (t_enter + 200, t_open + 1200, 1.15),
+        (t_open + 1200, t_blur - 200, 2.0),  # editor opening
+        (t_blur - 200, t_clip + 1200, 1.3),
+        (t_clip + 1200, t_video - 150, 3.0),  # editor closing
+        (t_video - 150, t_rec + 200, 1.3),
+        (t_rec + 200, t_saved, 1.6),
+        (t_saved, t_gifc + 200, 1.6),
+        (t_gifc + 200, t_gif - 500, 3.0),  # gif encoding
+        (t_gif - 500, min(t_gif + 1200, t_end), 1.0),
     ]
 
     cx, cy = 960, 540
     cam = [
-        (t_freeze - 1600, (cx, cy, 1.0), 0),
-        (t_smart + 200, (*P(720, 300), 1.35), 900),
-        (t_wheel + 200, (*P(700, 520), 1.15), 800),
-        (t_quick + 600, (cx, cy, 1.0), 800),
-        (T("key", "R") - 200, (*P(1190, 400), 1.6), 900),
-        (T("key", "N") + 300, (*P(600, 360), 1.35), 900),
-        (t_enter, (cx, cy, 1.0), 900),
-        (t_blur - 100, (*P(1400, 120), 1.7), 900),
-        (t_note - 100, (*P(1250, 470), 1.6), 800),
-        (t_clip + 200, (cx, cy, 1.0), 900),
-        (t_video + 300, (cx, 120, 1.9), 700),
-        (t_rec - 900, (*P(700, 600), 1.25), 900),
-        (t_saved + 200, (cx, cy, 1.0), 900),
-        (t_gifc - 200, (1500, 860, 1.6), 900),
-        (t_gif + 400, (cx, cy, 1.0), 1000),
+        (t_freeze - 1100, (cx, cy, 1.0), 0),
+        (t_smart + 100, (*P(800, 260), 1.3), 900),
+        (t_wheel + 300, (cx, cy, 1.04), 900),
+        (t_r - 300, (*P(1390, 470), 1.75), 900),
+        (t_n + 200, (*P(760, 230), 1.55), 900),
+        (t_enter + 100, (cx, cy, 1.0), 900),
+        (t_blur - 150, (*E(1460, 60), 1.9), 900),
+        (t_note - 100, (*E(1330, 700), 1.7), 900),
+        (t_clip + 300, (cx, cy, 1.0), 900),
+        (t_video + 300, (cx, 150, 2.0), 700),
+        (t_rec - 1000, (*P(800, 600), 1.2), 900),
+        (t_saved + 300, (cx, cy, 1.04), 900),
+        (t_gifc - 300, (1734, 935, 2.2), 900),
+        (t_gif + 300, (cx, cy, 1.04), 900),
     ]
 
     caps = [(ms, x) for ms, k, x in tk.beats if k == "caption"]
@@ -353,7 +366,9 @@ class Renderer:
         unwatermark(src, tk.wm)
         cx, cy, z = self.cam.at(ms)
         if self.square:
-            # Square window: 1080x1080 at zoom 1, centred on the camera x.
+            # Square window: 1080x1080 at zoom 1; drifts toward where the cursor is.
+            xs = [tk.cursor(ms + d)[0] for d in range(-700, 701, 140)]
+            cx = cx * 0.35 + (sum(xs) / len(xs)) * 0.65
             vw, vh = 1080 / z, 1080 / z
         else:
             vw, vh = 1920 / z, 1080 / z
