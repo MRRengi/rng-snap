@@ -12,6 +12,8 @@ const PER_SIDE: usize = 24;
 /// Fraction of a side that must be edge pixels.
 const COVER: f32 = 0.9;
 const MAX_RESULTS: usize = 6;
+/// Largest gap allowed between a side's end and its corner.
+const CORNER: i32 = 10;
 
 /// Prefix sums of edge pixels inside `area` (desktop coords).
 pub struct EdgeMap {
@@ -144,6 +146,13 @@ pub fn find(map: &EdgeMap, p: Point, min_side: i32) -> Vec<Rect> {
     rights.push(w - 1);
 
     let covered = |count: i32, len: i32| count as f32 >= COVER * len as f32;
+    // A side must reach close to both corners (rounded corners leave a small gap).
+    let hside = |y: i32, a: i32, b: i32| {
+        covered(map.hcount(y, a, b), b - a) && map.hcount(y, a, a + CORNER) > 0 && map.hcount(y, b - CORNER, b) > 0
+    };
+    let vside = |x: i32, a: i32, b: i32| {
+        covered(map.vcount(x, a, b), b - a) && map.vcount(x, a, a + CORNER) > 0 && map.vcount(x, b - CORNER, b) > 0
+    };
     let mut found = Vec::new();
     for &t in &tops {
         for &b in &bottoms {
@@ -161,10 +170,10 @@ pub fn find(map: &EdgeMap, p: Point, min_side: i32) -> Vec<Rect> {
                     if edges_all {
                         continue;
                     }
-                    let ok = (t == -1 || covered(map.hcount(t, left, right), right - left))
-                        && (b == h - 1 || covered(map.hcount(b, left, right), right - left))
-                        && (l == -1 || covered(map.vcount(l, top, bottom), bottom - top))
-                        && (r == w - 1 || covered(map.vcount(r, top, bottom), bottom - top));
+                    let ok = (t == -1 || hside(t, left, right))
+                        && (b == h - 1 || hside(b, left, right))
+                        && (l == -1 || vside(l, top, bottom))
+                        && (r == w - 1 || vside(r, top, bottom));
                     if ok {
                         found.push(Rect::new(left, top, right, bottom).offset(map.area.left, map.area.top));
                     }
@@ -274,6 +283,30 @@ mod tests {
         let map = EdgeMap::build(&f, f.rect);
         let got = find(&map, Point::new(1000 + 40, 500 + 150), 12);
         assert_eq!(got.first(), Some(&Rect::new(1000, 500, 1080, 800)), "{got:?}");
+    }
+
+    #[test]
+    fn no_box_borrowing_the_area_edge() {
+        // Card lines must not combine with the area's own edge into a fake box.
+        let f = ui();
+        let map = EdgeMap::build(&f, f.rect);
+        let got = find(&map, Point::new(1200, 625), 12);
+        assert!(!got.iter().any(|r| r.left == 1000 && r.top == 530), "{got:?}");
+        assert!(!got.iter().any(|r| r.left == 1080 && r.top == 530), "{got:?}");
+    }
+
+    #[test]
+    fn rounded_corners_still_count() {
+        let mut c = Canvas::new(300, 200, BG);
+        c.fill(Rect::new(50, 40, 250, 160), BLUE);
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (2, 0), (0, 2), (1, 1)] {
+            for &(x, y) in &[(50 + dx, 40 + dy), (249 - dx, 40 + dy), (50 + dx, 159 - dy), (249 - dx, 159 - dy)] {
+                c.fill(Rect::new(x, y, x + 1, y + 1), BG);
+            }
+        }
+        let f = c.frame(Point::new(0, 0));
+        let map = EdgeMap::build(&f, f.rect);
+        assert_eq!(find(&map, Point::new(150, 100), 12).first(), Some(&Rect::new(50, 40, 250, 160)));
     }
 
     #[test]

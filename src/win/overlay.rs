@@ -355,6 +355,9 @@ impl Overlay {
                 let delta = ((wp.0 >> 16) & 0xFFFF) as u16 as i16;
                 if delta != 0 {
                     let out = self.sel.as_mut().unwrap().wheel(delta > 0);
+                    if self.debug {
+                        log(&format!("wheel {delta} -> {out:?} frame {:?}", self.sel.as_ref().unwrap().view().frame));
+                    }
                     return (Some(LRESULT(0)), self.outcome(out));
                 }
                 (Some(LRESULT(0)), None)
@@ -363,8 +366,8 @@ impl Overlay {
                 if let Some(a) = self.elements.take() {
                     if self.debug {
                         log(&format!(
-                            "elements {} ms: hwnd {} uia {} pixel {} -> {:?}",
-                            a.ms, a.hwnd_n, a.uia_n, a.pixel_n, self.sel.as_ref().map(|s| s.chain(s.pos()))
+                            "elements {} ms: hwnd {} uia {} pixel {} | {}",
+                            a.ms, a.hwnd_n, a.uia_n, a.pixel_n, a.trace
                         ));
                     }
                     if a.capture == self.capture {
@@ -406,6 +409,9 @@ impl Overlay {
     }
 
     fn outcome(&mut self, out: Outcome) -> Option<Event> {
+        if self.debug && matches!(out, Outcome::Confirm(_) | Outcome::Cancel) {
+            log(&format!("outcome {out:?}"));
+        }
         match out {
             Outcome::Confirm(r) => Some(Event::Confirm(r)),
             Outcome::Cancel => Some(Event::Cancel),
@@ -681,6 +687,10 @@ impl Overlay {
             rt.DrawRectangle(&c0, &white, 1.0, None);
             rt.PopAxisAlignedClip();
             rt.DrawRoundedRectangle(&d2d::round_rect(card, 8.0 * s), &border, 1.0, None);
+            if let Ok(outline) = d2d::brush(rt, rgba(0x000000, 0.55)) {
+                let o = rect_f(card.left - 1.0, card.top - 1.0, card.right + 1.0, card.bottom + 1.0);
+                rt.DrawRoundedRectangle(&d2d::round_rect(o, 9.0 * s), &outline, 1.0, None);
+            }
         }
         let tx = dst.left + 10.0 * s;
         let mut ty = dst.bottom + 6.0 * s;

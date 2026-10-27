@@ -647,7 +647,7 @@ mod e2e {
         close_overlay_if_open();
 
         // B: wheel to the window level (one below the monitor) and click.
-        let img = capture_at((PAT.left + 180, PAT.top + 150), &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1], None);
+        let img = capture_at((PAT.left + 180, PAT.top + 150), &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1], Some((&rep.dir, "b1-window-level")));
         match img {
             Some(img) => {
                 let r = matches_pattern(&img, PAT);

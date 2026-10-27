@@ -37,6 +37,7 @@ pub struct Answer {
     pub hwnd_n: usize,
     pub uia_n: usize,
     pub pixel_n: usize,
+    pub trace: String,
 }
 
 pub struct Elements {
@@ -92,6 +93,7 @@ fn worker(rx: mpsc::Receiver<Query>, slot: Arc<Mutex<Option<Answer>>>, notify: i
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
     let uia = init_uia();
+    let debug = std::env::var_os("RENGI_SNAP_DEBUG").is_some();
     let mut edges: Option<(u64, Rect, EdgeMap)> = None;
     while let Ok(mut q) = rx.recv() {
         while let Ok(newer) = rx.try_recv() {
@@ -102,8 +104,12 @@ fn worker(rx: mpsc::Receiver<Query>, slot: Arc<Mutex<Option<Answer>>>, notify: i
         let (deepest, mut rects) = child_chain(top, q.point);
         let hwnd_n = rects.len();
         let mut uia_n = 0;
+        let mut trace = String::new();
+        if debug {
+            trace = format!("uia {} deepest {}; ", uia.is_some(), class_of(deepest));
+        }
         if let Some(u) = &uia {
-            let found = uia_chain(u, deepest, q.point, t0);
+            let found = uia_chain(u, deepest, q.point, t0, debug.then_some(&mut trace));
             uia_n = found.len();
             rects.extend(found);
         }
@@ -135,6 +141,7 @@ fn worker(rx: mpsc::Receiver<Query>, slot: Arc<Mutex<Option<Answer>>>, notify: i
             hwnd_n,
             uia_n,
             pixel_n,
+            trace,
         };
         drop(q);
         if let Ok(mut s) = slot.lock() {
@@ -172,37 +179,64 @@ fn child_chain(top: HWND, p: Point) -> (HWND, Vec<Rect>) {
 
 /// Descends the UIA tree from `start`, always into the smallest child that
 /// contains the point. Returns every rect on the way down.
-fn uia_chain(u: &Uia, start: HWND, p: Point, t0: Instant) -> Vec<Rect> {
+fn uia_chain(u: &Uia, start: HWND, p: Point, t0: Instant, mut trace: Option<&mut String>) -> Vec<Rect> {
     let mut out = Vec::new();
-    let Ok(mut el) = (unsafe { u.auto.ElementFromHandleBuildCache(start, &u.cache) }) else {
-        return out;
+    let mut el = match unsafe { u.auto.ElementFromHandleBuildCache(start, &u.cache) } {
+        Ok(e) => e,
+        Err(e) => {
+            if let Some(t) = trace.as_deref_mut() {
+                t.push_str(&format!("from handle failed {e}; "));
+            }
+            return out;
+        }
     };
     for _ in 0..MAX_DEPTH {
         if t0.elapsed() > BUDGET {
             break;
         }
-        let Ok(kids) = (unsafe { el.FindAllBuildCache(TreeScope_Children, &u.all, &u.cache) }) else {
-            break;
+        let kids = match unsafe { el.FindAllBuildCache(TreeScope_Children, &u.all, &u.cache) } {
+            Ok(k) => k,
+            Err(e) => {
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push_str(&format!("findall failed {e}; "));
+                }
+                break;
+            }
         };
         let n = unsafe { kids.Length() }.unwrap_or(0).min(MAX_CHILDREN);
+        let (mut off, mut norect, mut outside) = (0, 0, 0);
         let mut best: Option<(i64, IUIAutomationElement, Rect)> = None;
         for i in 0..n {
             let Ok(k) = (unsafe { kids.GetElement(i) }) else { continue };
             if unsafe { k.CachedIsOffscreen() }.map(|b| b.as_bool()).unwrap_or(false) {
+                off += 1;
                 continue;
             }
-            let Ok(r) = (unsafe { k.CachedBoundingRectangle() }) else { continue };
+            let Ok(r) = (unsafe { k.CachedBoundingRectangle() }) else {
+                norect += 1;
+                continue;
+            };
             let r = to_rect(r);
             if r.is_empty() || !r.contains(p) {
+                outside += 1;
                 continue;
             }
             if best.as_ref().is_none_or(|b| r.area() < b.0) {
                 best = Some((r.area(), k, r));
             }
         }
+        if let Some(t) = trace.as_deref_mut() {
+            t.push_str(&format!("[{n} kids off {off} norect {norect} outside {outside}] "));
+        }
         let Some((_, k, r)) = best else { break };
         out.push(r);
         el = k;
     }
     out
+}
+
+fn class_of(h: HWND) -> String {
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetClassNameW(h, &mut buf) } as usize;
+    String::from_utf16_lossy(&buf[..n])
 }
