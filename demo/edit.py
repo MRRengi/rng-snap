@@ -272,7 +272,7 @@ def direction(tk: Take):
         (t_video - 150, t_rec + 200, 1.3),
         (t_rec + 200, t_saved, 1.6),
         (t_saved, t_gifc + 200, 1.6),
-        (t_gifc + 200, t_gif - 500, 3.0),  # gif encoding
+        (t_gifc + 200, t_gif - 500, max(3.0, (t_gif - t_gifc) / 2200)),  # gif encoding
         (t_gif - 500, min(t_gif + 1200, t_end), 1.0),
     ]
 
@@ -285,7 +285,7 @@ def direction(tk: Take):
         (t_n + 200, (*P(760, 230), 1.55), 900),
         (t_enter + 100, (cx, cy, 1.0), 900),
         (t_blur - 150, (*E(1460, 60), 1.9), 900),
-        (t_note - 100, (*E(1330, 700), 1.7), 900),
+        (t_note - 100, (*E(1170, 690), 1.7), 900),
         (t_clip + 300, (cx, cy, 1.0), 900),
         (t_video + 300, (cx, 150, 2.0), 700),
         (t_rec - 1000, (*P(800, 600), 1.2), 900),
@@ -412,6 +412,9 @@ class Renderer:
             lift = int((1 - ease_out(min(1.0, (ms - t + 100) / 300))) * 18 * self.s)
             x = (self.W - capi.shape[1]) // 2
             y = self.H - capi.shape[0] - int(46 * self.s) + lift + pad
+            # Action at the bottom (cards, the recording bar): caption goes on top.
+            if sy > self.H * 0.68:
+                y = int(46 * self.s) - pad - lift
             blend(img, capi, x, y, max(0.0, a))
 
         # Key presses: stacked bottom-right of the caption area, newest right.

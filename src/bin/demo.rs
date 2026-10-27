@@ -793,10 +793,10 @@ mod demo {
         };
         let (mut last, mut since) = (size(), Instant::now());
         let t = Instant::now();
-        while made && t.elapsed() < Duration::from_secs(40) {
+        while made && t.elapsed() < Duration::from_secs(90) {
             sleep(200);
             let s = size();
-            if s != last {
+            if s != last || s == 0 {
                 (last, since) = (s, Instant::now());
             } else if since.elapsed() > Duration::from_millis(1500) {
                 break;
