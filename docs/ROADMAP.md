@@ -8,10 +8,11 @@
 
 - **Block 4 - Editor**: quick marks on the overlay (Ctrl while releasing the frame), full editor window from the card's Edit button. Tools: select, arrow, line, rectangle, ellipse, pen, marker, text, blur/pixelate, numbered steps, crop (editor). 8 colours + custom, 3 widths, undo/redo, zoom/pan, auto-copy after every change, last tool/colour remembered. Snagit-style rendering (shadows, outlined text). Checked end-to-end on the Windows CI desktop. Spec: `docs/specs/4-editor.md`
 
-- **Releases** v0.3.0 (blocks 1-3) and v0.4.0 (+ editor) on GitHub Releases. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
+- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps) on GitHub Releases.
+- **Demo video** for LinkedIn/X (16:9 + 1:1, 47 s) filmed on the Windows CI desktop (`demo` branch, `demo/edit.py` edits it), posts written. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
 
 **WE ARE HERE**
-- Maks checks block 4 (editor + quick marks) on his PC.
+- Maks checks block 4 (editor + quick marks) on his PC and posts the demo on LinkedIn and X.
 - Still open from block 3: 120/144 fps on his monitor, system sound + mic (CI has no audio devices), whether the yellow capture border shows.
 
 **Ahead**
