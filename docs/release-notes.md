@@ -3,6 +3,7 @@ Free, open-source screenshot and screen recording tool for Windows. One small ex
 **Screenshots**
 - Scroll Lock freezes all monitors; drag a frame or click a window / element (the mouse wheel walks element > panel > window > monitor)
 - Smart element detection: child windows, UI Automation, and pixel boxes for games and canvas apps
+- Works inside browsers and Electron apps too (Chrome, Edge, VS Code, Slack, Discord): hover a card or button on a web page and it snaps to it
 - Loupe with coordinates and pixel color (C copies the hex)
 - Copied to the clipboard instantly; preview card with Copy / Save / Save to / Folder
 
