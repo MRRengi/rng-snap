@@ -6,6 +6,13 @@ Free, open-source screenshot and screen recording tool for Windows. One small ex
 - Loupe with coordinates and pixel color (C copies the hex)
 - Copied to the clipboard instantly; preview card with Copy / Save / Save to / Folder
 
+**Marks and editor**
+- Hold Ctrl when you release the frame: a quick toolbar appears right on the frozen screen (arrow, line, rectangle, ellipse, pen, marker, text, blur, numbered steps)
+- Edit button on the card opens the full editor: same tools plus crop, 8 colours + any colour, 3 thicknesses, blur or pixelate, undo/redo, zoom (Ctrl+wheel)
+- Snagit-style looks: arrows with soft shadows, outlined text, numbered circles that count themselves
+- Every change goes to the clipboard by itself; Ctrl+S saves, Ctrl+C copies
+- Keys: V select, A arrow, L line, R rectangle, E ellipse, P pen, H marker, T text, B blur, N step, C crop, Shift snaps
+
 **Video**
 - Up to your monitor's refresh rate (120 / 144 / 240 fps), GPU hardware encoding (H.264, HEVC when needed)
 - System sound and microphone, pause, discard; the control bar never shows up in the video

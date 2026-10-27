@@ -6,11 +6,13 @@
 - **Block 2 - Smart regions**: hover snaps to elements inside windows (child windows + UI Automation + pixel boxes for games/canvas), mouse wheel walks levels element > panel > window > monitor. Spec: `docs/specs/2-smart-regions.md`
 - **Block 3 - Video**: Video mode on the panel (30/60/120/Max fps, Original/1080p/720p, system sound + mic), Windows.Graphics.Capture -> GPU -> hardware encoder (H.264, HEVC above the H.264 limit), control bar invisible to capture (timer, pause, stop, mic mute, discard), MP4 saved straight to the folder, card with Copy file / Save to / Folder / GIF. 47 end-to-end checks pass on a Windows CI desktop (120 fps measured at 120.5). Spec: `docs/specs/3-video.md`
 
-- **Release v0.3.0** on GitHub Releases (blocks 1-3). CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
+- **Block 4 - Editor**: quick marks on the overlay (Ctrl while releasing the frame), full editor window from the card's Edit button. Tools: select, arrow, line, rectangle, ellipse, pen, marker, text, blur/pixelate, numbered steps, crop (editor). 8 colours + custom, 3 widths, undo/redo, zoom/pan, auto-copy after every change, last tool/colour remembered. Snagit-style rendering (shadows, outlined text). Checked end-to-end on the Windows CI desktop. Spec: `docs/specs/4-editor.md`
+
+- **Releases** v0.3.0 (blocks 1-3) and v0.4.0 (+ editor) on GitHub Releases. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
 
 **WE ARE HERE**
-- Maks checks block 3 on his own PC: 120/144 fps on his monitor, system sound + mic (CI has no audio devices), whether the yellow capture border shows.
+- Maks checks block 4 (editor + quick marks) on his PC.
+- Still open from block 3: 120/144 fps on his monitor, system sound + mic (CI has no audio devices), whether the yellow capture border shows.
 
 **Ahead**
-- **Block 4 - Editor**: arrow, rectangle, text, blur.
 - **Block 5 - Release**: installer, exe icon, README with GIFs, GitHub Releases, winget.
