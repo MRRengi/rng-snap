@@ -1090,7 +1090,7 @@ mod e2e {
                 step(&mut rep, "E blur copies by itself", &|| {
                     tap(VK_B);
                     sleep(100);
-                    drag_to((ox + 150, oy + 120), (ox + 280, oy + 180));
+                    drag_to((ox + 150, oy + 88), (ox + 292, oy + 122));
                 });
                 step(&mut rep, "E text copies by itself", &|| {
                     tap(VK_T);

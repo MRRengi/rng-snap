@@ -97,6 +97,10 @@ pub struct Editor {
     status: String,
     status_font: Option<(f32, windows::Win32::Graphics::DirectWrite::IDWriteTextFormat)>,
     last_cursor: Point,
+    /// Natural toolbar width: the window never gets narrower than this.
+    min_w: i32,
+    /// Area shown last frame, to keep the view steady when it changes.
+    last_area: Rect,
 }
 
 fn dpi_scale(h: HWND) -> f32 {
@@ -154,7 +158,11 @@ impl Editor {
             status: String::new(),
             status_font: None,
             last_cursor: Point::default(),
+            min_w: 0,
+            last_area: Rect::new(0, 0, bw, bh),
         };
+        ed.strip.layout(gfx, &SLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
+        ed.min_w = ed.strip.rect.width() + (16.0 * scale) as i32;
         // Size: image + chrome, at most 85% of the work area, centred on the capture's monitor.
         unsafe {
             let m = MonitorFromPoint(POINT { x: near.left + near.width() / 2, y: near.top + near.height() / 2 }, MONITOR_DEFAULTTONEAREST);
@@ -162,9 +170,12 @@ impl Editor {
             let _ = GetMonitorInfoW(m, &mut info);
             let work = super::util::to_rect(info.rcWork);
             let bar = ed.bar_h();
-            let mut want = RECT { left: 0, top: 0, right: bw.max(900.min(work.width())) + (48.0 * scale) as i32, bottom: bh + bar + (48.0 * scale) as i32 };
+            let mut want = RECT { left: 0, top: 0, right: (bw + (48.0 * scale) as i32).max(ed.min_w), bottom: bh + bar + (48.0 * scale) as i32 };
             let _ = AdjustWindowRectEx(&mut want, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE(0));
-            let w = (want.right - want.left).min(work.width() * 85 / 100).max((760.0 * scale) as i32);
+            let mut min_win = RECT { left: 0, top: 0, right: ed.min_w, bottom: 10 };
+            let _ = AdjustWindowRectEx(&mut min_win, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE(0));
+            let min_win_w = min_win.right - min_win.left;
+            let w = (want.right - want.left).min(work.width() * 85 / 100).max(min_win_w.min(work.width()));
             let h = (want.bottom - want.top).min(work.height() * 85 / 100).max((480.0 * scale) as i32);
             let x = work.left + (work.width() - w) / 2;
             let y = work.top + (work.height() - h) / 2;
@@ -359,7 +370,11 @@ impl Editor {
             }
             WM_GETMINMAXINFO => {
                 let mmi = unsafe { &mut *(lp.0 as *mut MINMAXINFO) };
-                mmi.ptMinTrackSize = POINT { x: (720.0 * self.scale) as i32, y: (360.0 * self.scale) as i32 };
+                let mut r = RECT { left: 0, top: 0, right: self.min_w.max((480.0 * self.scale) as i32), bottom: (360.0 * self.scale) as i32 };
+                unsafe {
+                    let _ = AdjustWindowRectEx(&mut r, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE(0));
+                }
+                mmi.ptMinTrackSize = POINT { x: r.right - r.left, y: r.bottom - r.top };
                 (Some(LRESULT(0)), None)
             }
             WM_PAINT => {
@@ -607,6 +622,16 @@ impl Editor {
         let Some(rt) = self.rt.clone() else { return };
         let s = self.scale;
         let area = self.area();
+        // Crop applied or undone: re-fit, or keep the same pixels in place.
+        if area != self.last_area {
+            if self.fit {
+                self.fit_view();
+            } else {
+                self.origin.0 += (area.left - self.last_area.left) as f32 * self.zoom;
+                self.origin.1 += (area.top - self.last_area.top) as f32 * self.zoom;
+            }
+            self.last_area = area;
+        }
         // Re-render the image only when the marks changed.
         let need = !matches!(&self.cache, Some((v, a, _)) if *v == self.canvas.version && *a == self.canvas.crop);
         if need {
