@@ -7,7 +7,7 @@ rengi-snap-16x9.mp4 and rengi-snap-1x1.mp4. The direction (what to cut, where
 the camera goes) lives in DIRECTION below and is anchored to beats, so a new
 take with different timing still edits correctly.
 """
-import bisect, math, re, subprocess, sys
+import bisect, json, math, re, subprocess, sys
 from pathlib import Path
 
 import cv2
@@ -302,13 +302,96 @@ def direction(tk: Take):
     return seg, cam, caps, keys, clicks
 
 
+def _norm(w):
+    return re.sub(r"[^a-z0-9']", "", w.lower())
+
+
+def voice_plan(tk, words, narr_s):
+    """Pacing from a one-take narration: every scene starts on its words.
+
+    Where an action needs more time than the voice gives it, silence is added
+    in the nearest pause between sentences before the next scene's words.
+    Returns (segments, title_s, end_s, inserts) with inserts = [(at_s, dur_s)]
+    in original narration time; output time == edited narration time.
+    """
+    W = [(_norm(w["text"]), w["start"], w["end"], w["text"]) for w in words if w.get("type", "word") == "word" and _norm(w["text"])]
+
+    def at(phrase, after=0.0, end=False):
+        toks = [_norm(t) for t in phrase.split()]
+        for i in range(len(W) - len(toks) + 1):
+            if W[i][1] >= after and all(W[i + j][0] == toks[j] for j in range(len(toks))):
+                return W[i + len(toks) - 1][2] if end else W[i][1]
+        raise KeyError(f"narration has no '{phrase}' after {after:.2f}")
+
+    def pause_before(t, lo):
+        """Middle of the last pause between sentences (or clauses) in (lo, t)."""
+        for marks in (".?!", ","):
+            best = None
+            for k in range(len(W) - 1):
+                if W[k][3][-1:] in marks and lo <= W[k][2] and W[k + 1][1] <= t + 1e-6:
+                    best = (W[k][2] + W[k + 1][1]) / 2
+            if best is not None:
+                return best
+        return max(lo, t - 0.05)
+
+    T = tk.t
+    cap = lambda text: T("caption", text)
+    t_lock = T("key", "Scroll Lock")
+    s_press = at("press scroll lock")
+    s_github = at("github")
+    # (beat, narration word time, max speed of the segment that ENDS here)
+    pairs = [
+        (t_lock - 1100, s_press - 0.5, 0),
+        (t_lock, at("lock", s_press) + 0.05, 2.0),
+        (cap("It finds"), at("move your cursor"), 2.0),
+        (cap("Mouse wheel"), at("scroll to grab"), 2.0),
+        (cap("Hold Ctrl"), at("hold control"), 2.0),
+        (T("key", "R"), at("mark it up"), 4.0),
+        (T("key", "N"), at("numbered"), 2.0),
+        (T("key", "Enter"), at("enter"), 2.0),
+        (cap("Need more"), at("need more"), 2.0),
+        (cap("Blur"), at("blur"), 3.0),
+        (cap("Add a note"), at("add a note"), 2.0),
+        (cap("Every change"), at("every change"), 2.4),
+        (cap("Video too"), at("it records video"), 3.0),
+        (T("mark", "recording"), at("hundred"), 2.0),
+        (cap("Saved as MP4"), at("saved as"), 3.0),
+        (cap("One click"), at("one click"), 2.0),
+        (T("mark", "gif-done"), at("gif", at("one click"), end=True) + 0.15, 8.0),
+        (min(T("mark", "gif-done") + 1600, tk.end), at("snap", s_github - 4) - 0.45, 1.0),
+    ]
+    seg, inserts = [], []
+    shift = 0.0  # silence added so far
+    cur = pairs[0][1]
+    for (b0, n0, _), (b1, n1, cap_sp) in zip(pairs, pairs[1:]):
+        need = (b1 - b0) / 1000 / cap_sp  # shortest this action may take
+        avail = n1 + shift - cur
+        if need > avail + 0.02:
+            extra = need - avail
+            at_t = pause_before(n1, cur - shift)
+            inserts.append((at_t, extra))
+            shift += extra
+            avail += extra
+        sp = min(cap_sp, max(0.8, (b1 - b0) / 1000 / max(0.05, avail)))
+        seg.append((b0, b1, sp))
+        cur += (b1 - b0) / 1000 / sp
+        print(f"  beat {b0:6d}-{b1:6d} speed {sp:4.2f} -> {cur:6.2f}s (word at {n1 + shift:6.2f}s)")
+    title_s = pairs[0][1]
+    end_s = max(2.5, narr_s + shift - cur + 1.6)
+    print("  pauses added:", ", ".join(f"{d:.2f}s at {t:.2f}s" for t, d in inserts) or "none")
+    return seg, title_s, end_s, inserts
+
+
 # ---------------------------------------------------------------- render
 
 
 class Renderer:
-    def __init__(self, tk, out_w, out_h, square):
+    def __init__(self, tk, out_w, out_h, square, plan=None):
         self.tk, self.W, self.H, self.square = tk, out_w, out_h, square
         self.seg, cam, self.caps, self.keys, self.clicks = direction(tk)
+        self.title_s, self.end_s = TITLE_S, END_S
+        if plan:
+            self.seg, self.title_s, self.end_s = plan[:3]
         self.cam = Track(cam)
         s = out_h / 1080
         self.s = s
@@ -344,11 +427,23 @@ class Renderer:
         return to_np(im)
 
     def timeline(self):
-        """Yields beat-time ms for each output frame."""
+        """Yields beat-time ms for each output frame, with no rounding drift between segments."""
+        starts, t = [], 0.0
         for a, b, sp in self.seg:
-            n = int((b - a) / sp * FPS / 1000)
-            for i in range(n):
-                yield a + i * sp * 1000 / FPS
+            starts.append(t)
+            t += (b - a) / sp / 1000
+        total = t
+        k, i = 0, 0
+        while True:
+            # Frames are aligned to the title so footage frame k sits at title + k/FPS.
+            ts = k / FPS
+            if ts >= total:
+                break
+            while i + 1 < len(self.seg) and ts >= starts[i + 1]:
+                i += 1
+            a, b, sp = self.seg[i]
+            yield a + (ts - starts[i]) * sp * 1000
+            k += 1
 
     def caption_img(self, text):
         if text not in self.cap_cache:
@@ -511,7 +606,7 @@ class Renderer:
             stdin=subprocess.PIPE,
         )
         w = enc.stdin.write
-        title = self.card("title", int(FPS * TITLE_S))
+        title = self.card("title", int(round(FPS * self.title_s)))
         footage = []
         cap = cv2.VideoCapture(self.tk.video)
         pos, cur = -1, None
@@ -536,7 +631,7 @@ class Renderer:
             w(fr.tobytes())
             last = fr
             n += 1
-        end = self.card("end", int(FPS * END_S))
+        end = self.card("end", int(round(FPS * self.end_s)))
         for i, t in enumerate(end):
             k = min(1.0, i / (FPS * 0.35))
             w((last * (1 - k) + t * k).astype(np.uint8).tobytes() if k < 1 else t.tobytes())
@@ -552,11 +647,21 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     tk = Take(d)
     print("flash at frame", tk.flash_frame)
+    plan = None
+    if "--voice" in sys.argv:
+        vdir = Path(sys.argv[sys.argv.index("--voice") + 1])
+        pick = sys.argv[sys.argv.index("--pick") + 1] if "--pick" in sys.argv else "0"
+        words = json.loads((vdir / f"words-{pick}.json").read_text())
+        narr = vdir / f"narration-{pick}.mp3"
+        narr_s = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(narr)], capture_output=True, text=True).stdout)
+        plan = voice_plan(tk, words, narr_s)
+        print(f"title {plan[1]:.2f}s, end card {plan[2]:.2f}s, narration {narr_s:.2f}s")
+        (out / "inserts.json").write_text(json.dumps(plan[3]))
     if not only or "16x9" in only:
-        n = Renderer(tk, 1920, 1080, False).render(out / "rengi-snap-16x9.mp4", fast)
+        n = Renderer(tk, 1920, 1080, False, plan).render(out / "rengi-snap-16x9.mp4", fast)
         print("16x9 footage frames", n)
     if not only or "1x1" in only:
-        n = Renderer(tk, 1080, 1080, True).render(out / "rengi-snap-1x1.mp4", fast)
+        n = Renderer(tk, 1080, 1080, True, plan).render(out / "rengi-snap-1x1.mp4", fast)
         print("1x1 footage frames", n)
 
 
