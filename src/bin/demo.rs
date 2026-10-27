@@ -220,6 +220,7 @@ mod demo {
     }
 
     fn click() {
+        beat("click", "");
         mouse(MOUSEEVENTF_LEFTDOWN);
         sleep(70);
         mouse(MOUSEEVENTF_LEFTUP);
@@ -234,11 +235,13 @@ mod demo {
     fn drag(from: (i32, i32), to: (i32, i32), ms: u64) {
         glide(from, 450);
         sleep(120);
+        beat("down", "");
         mouse(MOUSEEVENTF_LEFTDOWN);
         sleep(60);
         glide(to, ms);
         sleep(80);
         mouse(MOUSEEVENTF_LEFTUP);
+        beat("up", "");
     }
 
     fn files_with(dir: &Path, ext: &str) -> usize {
