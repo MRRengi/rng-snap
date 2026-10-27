@@ -179,6 +179,13 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
     let dxgi: IDXGIDevice = w(dev.cast(), "dxgi device")?;
     let winrt_dev: IDirect3DDevice = unsafe { w(CreateDirect3D11DeviceFromDXGIDevice(&dxgi), "winrt device")? }.cast().map_err(|e| e.to_string())?;
 
+    // Windows 11 draws a yellow frame around captured screens unless the app
+    // asked for borderless capture before creating the session.
+    match windows::Graphics::Capture::GraphicsCaptureAccess::RequestAccessAsync(windows::Graphics::Capture::GraphicsCaptureAccessKind::Borderless) {
+        Ok(op) => log(&format!("borderless access: {:?}", op.join().map(|s| s.0))),
+        Err(e) => log(&format!("borderless request failed: {e}")),
+    }
+
     // Capture the monitor.
     let interop = w(windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>(), "capture interop")?;
     let item: GraphicsCaptureItem = unsafe { w(interop.CreateForMonitor(HMONITOR(p.monitor as *mut _)), "capture item")? };
@@ -186,13 +193,9 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
     let pool = w(Direct3D11CaptureFramePool::CreateFreeThreaded(&winrt_dev, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, size), "frame pool")?;
     let session: GraphicsCaptureSession = w(pool.CreateCaptureSession(&item), "session")?;
     let _ = session.SetIsCursorCaptureEnabled(true);
-    // Windows 11 draws a yellow frame around captured screens unless the app
-    // asked for borderless capture first (granted to desktop apps).
-    if let Ok(op) = windows::Graphics::Capture::GraphicsCaptureAccess::RequestAccessAsync(windows::Graphics::Capture::GraphicsCaptureAccessKind::Borderless) {
-        let _ = op.join();
-    }
-    if let Err(e) = session.SetIsBorderRequired(false) {
-        log(&format!("border stays: {e}"));
+    match session.SetIsBorderRequired(false) {
+        Err(e) => log(&format!("border stays: {e}")),
+        Ok(()) => log(&format!("border required now: {:?}", session.IsBorderRequired())),
     }
     let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
     w(session.StartCapture(), "start capture")?;
