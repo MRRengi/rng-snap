@@ -2,7 +2,7 @@ name: voice
 on:
   push:
     branches: [voice, demo]
-    paths: ['demo/voice/lines.json', 'demo/voice/generate.py', '.github/workflows/voice.yml']
+    paths: ['demo/voice/narration.json', 'demo/voice/narrate.py']
 
 permissions:
   contents: write
@@ -15,7 +15,9 @@ jobs:
       - name: Generate
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-        run: python3 demo/voice/generate.py results/voice
+        run: |
+          pip install -q requests
+          python3 demo/voice/narrate.py results/voice
       - name: Publish
         if: always()
         run: |

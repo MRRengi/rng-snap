@@ -1,0 +1,15 @@
+{
+  "design": {
+    "model_id": "eleven_ttv_v3",
+    "voice_description": "A real man in his early thirties with a natural American accent, talking to a friend about a small tool he built and genuinely likes. Relaxed, warm and a little understated, low mid-range voice with some natural breath and texture. Conversational rhythm, unhurried, with tiny natural pauses. Not a radio announcer, not a commercial voice, no forced enthusiasm, no vocal fry. Close microphone, dry quiet room, clean studio-quality recording.",
+    "guidance_scale": 3.0,
+    "loudness": 0.5
+  },
+  "tts": {
+    "model_id": "eleven_v4",
+    "settings": {"stability": 0.45, "similarity_boost": 0.75}
+  },
+  "music_prompt": "Calm minimal electronic background for a software product demo. Soft warm synth pads, gentle plucked arpeggio, light airy percussion, steady 100 BPM, modern and clean, no vocals, no big drops, even energy throughout, ends softly.",
+  "music_ms": 60000,
+  "text": "Meet Snap. A free, open-source screenshot tool for Windows.\n\nPress Scroll Lock, and the screen freezes. Move your cursor, and Snap finds every element underneath it. Scroll to grab a bigger area, or a smaller one.\n\nHold Control, and mark it up right there. Boxes, arrows, numbered steps. Hit Enter, and it's on your clipboard.\n\nNeed more? Open the editor. Blur anything private, add a note, and every change is copied automatically.\n\nIt records video too, up to a hundred and twenty frames per second. Saved as an MP4, and one click turns it into a GIF.\n\nSnap. Free, on GitHub."
+}
