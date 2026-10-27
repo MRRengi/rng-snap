@@ -413,7 +413,7 @@ class Renderer:
             x = (self.W - capi.shape[1]) // 2
             y = self.H - capi.shape[0] - int(46 * self.s) + lift + pad
             # Action at the bottom (cards, the recording bar): caption goes on top.
-            if sy > self.H * 0.68:
+            if tk.cursor(t + 900)[1] > 820:
                 y = int(46 * self.s) - pad - lift
             blend(img, capi, x, y, max(0.0, a))
 
