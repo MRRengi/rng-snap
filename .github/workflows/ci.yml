@@ -2,6 +2,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -34,8 +35,14 @@ jobs:
         with:
           name: RengiSnap
           path: target/release/RengiSnap.exe
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/RengiSnap.exe
+          body_path: docs/release-notes.md
       - name: Publish results branch
-        if: always()
+        if: always() && !startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           if (Test-Path results/home/log.txt) { Copy-Item results/home/log.txt results/app-log.txt }
