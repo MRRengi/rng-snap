@@ -831,7 +831,7 @@ mod e2e {
                 let _ = SetForegroundWindow(ex);
             }
             sleep(1500);
-            for (name, p) in [("k1-explorer-list", (560, 330)), ("k2-explorer-nav", (130, 330)), ("k3-explorer-toolbar", (300, 160))] {
+            for (name, p) in [("k1-explorer-list", (560, 330)), ("k2-explorer-nav", (120, 356)), ("k3-explorer-toolbar", (300, 160))] {
                 if open_overlay().is_some() {
                     move_to(p.0 - 3, p.1);
                     sleep(60);

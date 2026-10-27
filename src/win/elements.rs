@@ -19,6 +19,8 @@ use windows::core::Interface;
 const BUDGET: Duration = Duration::from_millis(400);
 const MAX_DEPTH: usize = 48;
 const MAX_CHILDREN: i32 = 4000;
+/// How many siblings to look inside when none of them contains the point.
+const LOOKAHEAD: i32 = 64;
 
 pub struct Query {
     pub capture: u64,
@@ -228,6 +230,14 @@ fn uia_chain(u: &Uia, start: HWND, p: Point, t0: Instant, mut trace: Option<&mut
         if let Some(t) = trace.as_deref_mut() {
             t.push_str(&format!("[{n} kids off {off} norect {norect} outside {outside}] "));
         }
+        // Tree views: a parent item's rect covers only its own row, not the
+        // expanded children under it, so look one level deeper.
+        if best.is_none() {
+            best = lookahead(u, &kids, n.min(LOOKAHEAD), p, t0);
+            if let (Some(t), Some(b)) = (trace.as_deref_mut(), &best) {
+                t.push_str(&format!("(lookahead {:?}) ", b.2));
+            }
+        }
         let Some((_, k, r)) = best else { break };
         out.push(r);
         el = k;
@@ -239,4 +249,32 @@ fn class_of(h: HWND) -> String {
     let mut buf = [0u16; 64];
     let n = unsafe { GetClassNameW(h, &mut buf) } as usize;
     String::from_utf16_lossy(&buf[..n])
+}
+
+/// Smallest grandchild containing the point, searched under the first `n` children.
+fn lookahead(u: &Uia, kids: &IUIAutomationElementArray, n: i32, p: Point, t0: Instant) -> Option<(i64, IUIAutomationElement, Rect)> {
+    let mut best: Option<(i64, IUIAutomationElement, Rect)> = None;
+    for i in 0..n {
+        if t0.elapsed() > BUDGET {
+            break;
+        }
+        let Ok(k) = (unsafe { kids.GetElement(i) }) else { continue };
+        let Ok(grand) = (unsafe { k.FindAllBuildCache(TreeScope_Children, &u.all, &u.cache) }) else { continue };
+        let m = unsafe { grand.Length() }.unwrap_or(0).min(MAX_CHILDREN);
+        for j in 0..m {
+            let Ok(g) = (unsafe { grand.GetElement(j) }) else { continue };
+            if unsafe { g.CachedIsOffscreen() }.map(|b| b.as_bool()).unwrap_or(false) {
+                continue;
+            }
+            let Ok(r) = (unsafe { g.CachedBoundingRectangle() }) else { continue };
+            let r = to_rect(r);
+            if r.is_empty() || !r.contains(p) {
+                continue;
+            }
+            if best.as_ref().is_none_or(|b| r.area() < b.0) {
+                best = Some((r.area(), g, r));
+            }
+        }
+    }
+    best
 }
