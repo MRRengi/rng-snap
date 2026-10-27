@@ -1043,7 +1043,14 @@ mod e2e {
         }
         close_overlay_if_open();
 
-        // E: editor from the card's Edit button.
+        // E: editor from the card's Edit button. The always-on-top test
+        // windows would cover the (normal) editor window, so hide them.
+        let test_windows: Vec<HWND> = [w!("E2EPattern"), w!("E2ENested"), w!("E2EPainted"), w!("E2EAnim")].iter().filter_map(|c| find(*c)).collect();
+        for h in &test_windows {
+            unsafe {
+                let _ = ShowWindow(*h, SW_HIDE);
+            }
+        }
         if wait(2000, || visible(w!("RengiSnapCard"))) {
             let card = window_rect(find(w!("RengiSnapCard")).unwrap().0 as isize);
             click_at(card.left + 10 + 64 * 4 + 32, card.bottom - 29);
@@ -1120,6 +1127,12 @@ mod e2e {
         } else {
             rep.check("E card shows after quick capture", false, "");
         }
+        for h in &test_windows {
+            unsafe {
+                let _ = ShowWindow(*h, SW_SHOWNOACTIVATE);
+            }
+        }
+        sleep(300);
 
         // V: video.
         // V1: switch the panel to Video by clicking it, then drag over the animated window at 60 fps.
