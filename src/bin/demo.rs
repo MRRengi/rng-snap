@@ -557,18 +557,33 @@ mod demo {
 
         // Camera on.
         let raw = out.join("raw.mp4");
-        let mut ff = match Command::new("ffmpeg")
-            .args(["-y", "-loglevel", "error", "-f", "gdigrab", "-framerate", "60", "-draw_mouse", "1", "-i", "desktop"])
-            .args(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p"])
-            .arg(&raw)
-            .stdin(Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                note(format!("ffmpeg: {e}"));
-                return 1;
+        let start_ff = |dda: bool| -> Option<Child> {
+            let mut c = Command::new("ffmpeg");
+            c.args(["-y", "-loglevel", "error"]);
+            if dda {
+                c.args(["-f", "lavfi", "-i", "ddagrab=output_idx=0:framerate=60:draw_mouse=0", "-vf", "hwdownload,format=bgra"]);
+            } else {
+                c.args(["-f", "gdigrab", "-framerate", "60", "-draw_mouse", "0", "-i", "desktop"]);
             }
+            c.args(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p"]).arg(&raw).stdin(Stdio::piped());
+            c.spawn().ok()
+        };
+        let mut ff = None;
+        for dda in [true, false] {
+            let _ = std::fs::remove_file(&raw);
+            let Some(mut c) = start_ff(dda) else { continue };
+            let grew = wait(6000, || raw.metadata().map(|m| m.len() > 4096).unwrap_or(false));
+            if grew && matches!(c.try_wait(), Ok(None)) {
+                note(format!("capture: {}", if dda { "ddagrab" } else { "gdigrab" }));
+                ff = Some(c);
+                break;
+            }
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        let Some(mut ff) = ff else {
+            note("ffmpeg could not capture".into());
+            return 1;
         };
         wait(10000, || raw.metadata().map(|m| m.len() > 0).unwrap_or(false));
         sleep(1500);

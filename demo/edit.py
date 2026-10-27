@@ -43,6 +43,7 @@ class Take:
                 self.vp = tuple(map(int, p[1:5]))
         self.video = str(d / "demo-raw.mp4")
         self.flash_frame = find_flash(self.video)
+        self.wm = watermark(self.video, self.flash_frame + 45)
         self.end = next((t for t, k, x in self.beats if k == "mark" and x == "end"), self.beats[-1][0])
 
     def src_frame(self, ms):
@@ -83,6 +84,34 @@ def find_flash(path):
         i += 1
     cap.release()
     raise SystemExit("no sync flash in the footage")
+
+
+WM_BOX = (1690, 1022, 1920, 1080)
+
+
+def watermark(path, frame_no):
+    """The runner's 'Test Mode' desktop text: (mask, clean patch, reference patch)."""
+    cap = cv2.VideoCapture(path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
+    ok, f = cap.read()
+    cap.release()
+    x0, y0, x1, y1 = WM_BOX
+    ref = f[y0:y1, x0:x1].copy()
+    blur = cv2.GaussianBlur(ref, (0, 0), 6)
+    mask = (np.abs(ref.astype(np.int16) - blur.astype(np.int16)).max(axis=2) > 18).astype(np.uint8) * 255
+    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=2)
+    clean = cv2.inpaint(ref, mask, 6, cv2.INPAINT_TELEA)
+    return mask > 0, clean, ref
+
+
+def unwatermark(f, wm):
+    mask, clean, ref = wm
+    x0, y0, x1, y1 = WM_BOX
+    sub = f[y0:y1, x0:x1]
+    same = np.abs(sub.astype(np.int16) - ref.astype(np.int16)).max(axis=2) < 40
+    m = mask & same
+    if m.any():
+        sub[m] = clean[m]
 
 
 # ---------------------------------------------------------------- easing
@@ -298,6 +327,7 @@ class Renderer:
 
     def frame(self, src, ms):
         tk = self.tk
+        unwatermark(src, tk.wm)
         cx, cy, z = self.cam.at(ms)
         if self.square:
             # Square window: 1080x1080 at zoom 1, centred on the camera x.
