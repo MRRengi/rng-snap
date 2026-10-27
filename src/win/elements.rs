@@ -166,9 +166,15 @@ fn child_chain(top: HWND, p: Point) -> (HWND, Vec<Rect>) {
                 break;
             }
         }
-        let child = unsafe { ChildWindowFromPointEx(cur, pt, CWP_SKIPINVISIBLE | CWP_SKIPTRANSPARENT) };
+        let mut child = unsafe { ChildWindowFromPointEx(cur, pt, CWP_SKIPINVISIBLE | CWP_SKIPTRANSPARENT) };
         if child.is_invalid() || child == cur {
-            break;
+            // Chromium (Chrome, Edge, Electron apps) hosts the page's UIA tree in a
+            // transparent child window; without it the page is one flat pane.
+            let c = unsafe { ChildWindowFromPointEx(cur, pt, CWP_SKIPINVISIBLE) };
+            if c.is_invalid() || c == cur || class_of(c) != "Chrome_RenderWidgetHostHWND" {
+                break;
+            }
+            child = c;
         }
         let mut r = RECT::default();
         if unsafe { GetWindowRect(child, &mut r) }.is_ok() {

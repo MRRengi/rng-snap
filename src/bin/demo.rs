@@ -628,15 +628,15 @@ mod demo {
 
         // 2. Smart regions.
         beat("caption", "It finds every element under the cursor");
-        glide(page_at(380, 250), 700);
+        glide(page_at(470, 178), 700);
         sleep(900);
-        glide(page_at(720, 260), 650);
+        glide(page_at(800, 178), 650);
         sleep(800);
-        glide(page_at(1060, 250), 650);
+        glide(page_at(1120, 178), 650);
         sleep(800);
-        glide(page_at(1400, 300), 700);
+        glide(page_at(1400, 650), 800);
         sleep(900);
-        glide(page_at(700, 620), 800);
+        glide(page_at(800, 392), 800);
         sleep(900);
         screenshot(out, "s1-hover-traffic");
         beat("caption", "Mouse wheel picks the level");
@@ -664,17 +664,17 @@ mod demo {
         screenshot(out, "s3-quick");
         tap(VK_R, "R");
         sleep(300);
-        drag(page_at(1240, 390), page_at(1556, 434), 650);
+        drag(page_at(1230, 400), page_at(1541, 454), 650);
         sleep(500);
         tap(VK_A, "A");
         sleep(300);
-        drag(page_at(1300, 660), page_at(1385, 446), 600);
+        drag(page_at(1432, 750), page_at(1424, 462), 600);
         sleep(500);
         tap(VK_N, "N");
         sleep(300);
         glide_click(page_at(452, 208), 700);
         sleep(450);
-        glide_click(page_at(334, 512), 700);
+        glide_click(page_at(1040, 208), 700);
         sleep(700);
         screenshot(out, "s4-marked");
         tap(VK_RETURN, "Enter");
@@ -716,7 +716,7 @@ mod demo {
         beat("caption", "Add a note");
         tap(VK_T, "T");
         sleep(300);
-        glide_click(img(1252, 560), 800);
+        glide_click(img(1240, 790), 800);
         sleep(300);
         type_text("Failing for 2 h, on it");
         sleep(400);
@@ -743,7 +743,7 @@ mod demo {
         glide_click((sw / 2 - 42, 36), 900);
         sleep(900);
         screenshot(out, "s7-video-mode");
-        glide(page_at(560, 610), 900);
+        glide(page_at(800, 392), 900);
         sleep(1000);
         click();
         beat("mark", "recording");
@@ -770,6 +770,24 @@ mod demo {
         let gifs = files_with(pics, "gif");
         glide_click((card.l + 290, card.b - 29), 1000);
         let made = wait(30000, || files_with(pics, "gif") > gifs);
+        // The file appears while it is still being written: wait until its size settles.
+        let size = || {
+            std::fs::read_dir(pics)
+                .map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "gif")).filter_map(|e| e.metadata().ok()).map(|m| m.len()).max().unwrap_or(0))
+                .unwrap_or(0)
+        };
+        let (mut last, mut since) = (size(), Instant::now());
+        let t = Instant::now();
+        while made && t.elapsed() < Duration::from_secs(40) {
+            sleep(200);
+            let s = size();
+            if s != last {
+                (last, since) = (s, Instant::now());
+            } else if since.elapsed() > Duration::from_millis(1500) {
+                break;
+            }
+        }
+        sleep(400);
         beat("mark", "gif-done");
         note(format!("gif made: {made}"));
         sleep(2200);
