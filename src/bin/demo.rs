@@ -329,6 +329,23 @@ mod demo {
         true.into()
     }
 
+    unsafe extern "system" fn hide_icons_in(h: HWND, _: LPARAM) -> BOOL {
+        unsafe {
+            if let Ok(view) = FindWindowExW(Some(h), None, w!("SHELLDLL_DefView"), None) {
+                if let Ok(list) = FindWindowExW(Some(view), None, w!("SysListView32"), None) {
+                    let _ = ShowWindow(list, SW_HIDE);
+                }
+            }
+        }
+        true.into()
+    }
+
+    fn hide_desktop_icons() {
+        unsafe {
+            let _ = EnumWindows(Some(hide_icons_in), LPARAM(0));
+        }
+    }
+
     fn minimize_all() {
         unsafe {
             let _ = EnumWindows(Some(minimize_one), LPARAM(0));
@@ -375,7 +392,9 @@ mod demo {
 
     fn launch_page(page: &Path, profile: &Path) -> Option<Child> {
         let exe = browser()?;
-        let url = format!("file:///{}", page.to_string_lossy().replace('\\', "/"));
+        let raw = page.to_string_lossy();
+        let path = raw.trim_start_matches(r"\\?\");
+        let url = format!("file:///{}", path.replace('\\', "/").replace(' ', "%20"));
         Command::new(exe)
             .arg(format!("--app={url}"))
             .arg(format!("--user-data-dir={}", profile.display()))
@@ -489,6 +508,7 @@ mod demo {
         autohide_taskbar();
         set_wallpaper(&wall);
         minimize_all();
+        hide_desktop_icons();
         sleep(800);
         let profile = out.join("chrome-profile");
         let Some(mut chrome) = launch_page(&page, &profile) else {
