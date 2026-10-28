@@ -9,6 +9,7 @@ mod image;
 mod mixer;
 mod regions;
 mod select;
+mod vedit;
 mod videoplan;
 #[cfg(windows)]
 mod win;

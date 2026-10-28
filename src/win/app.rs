@@ -8,17 +8,19 @@
 use super::card::{self, Button, Card};
 use super::d2d::Gfx;
 use super::editor::{self, Editor};
+use super::veditor::{self, VEditor};
 use crate::annot::{Color, Item, Tool};
 use super::overlay::{self, Overlay, PanelState};
 use super::recbar::{BarButton, RecBar};
 use super::record::{self, Recorder};
 use super::util::log;
-use super::{AUTOCOPY_TIMER, WM_APP_CAPTURE, WM_APP_GIF, WM_APP_TRAY, class_name, clipboard, files, grab, hook, mp4read, paths, tray, wins};
+use super::{AUTOCOPY_TIMER, WM_APP_CAPTURE, WM_APP_EDIT, WM_APP_GIF, WM_APP_TRAY, class_name, clipboard, files, grab, hook, mp4read, paths, tray, wins};
 use crate::videoplan::{self, Res};
 use crate::config::Config;
 use crate::geom::{Point, Rect};
 use crate::image::Frame;
 use std::cell::RefCell;
+use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -64,6 +66,7 @@ struct App {
     overlay: Overlay,
     card: Card,
     editor: Option<Editor>,
+    veditor: Option<VEditor>,
     instance: HINSTANCE,
     recbar: RecBar,
     rec: Option<Recording>,
@@ -77,6 +80,8 @@ struct App {
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+    /// Video handed over by a second instance (`--edit`).
+    static PENDING_EDIT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     /// Frame promised to the clipboard as PNG (delayed rendering). Kept apart
     /// from `APP` because clipboard requests can arrive at any moment.
     static CLIP: RefCell<Option<Rc<Frame>>> = const { RefCell::new(None) };
@@ -91,14 +96,26 @@ pub fn run() {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     }
-    let want_capture = std::env::args().any(|a| a == "--capture");
+    let args: Vec<String> = std::env::args().collect();
+    let want_capture = args.iter().any(|a| a == "--capture");
+    // `--edit <video>` opens the video editor (also used by "Open with").
+    let want_edit = args.iter().position(|a| a == "--edit").and_then(|i| args.get(i + 1)).map(PathBuf::from);
 
-    // Single instance: a second launch asks the running one to capture.
+    // Single instance: a second launch hands its request to the running one.
     let mutex = unsafe { CreateMutexW(None, true, w!("Local\\RengiSnap.Instance")) };
     if mutex.is_ok() && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         if let Ok(other) = unsafe { FindWindowW(class_name::MSG, None) } {
             unsafe {
-                let _ = PostMessageW(Some(other), WM_APP_CAPTURE, WPARAM(0), LPARAM(0));
+                match &want_edit {
+                    Some(p) => {
+                        let w: Vec<u16> = p.as_os_str().encode_wide().collect();
+                        let cds = windows::Win32::System::DataExchange::COPYDATASTRUCT { dwData: COPY_EDIT, cbData: (w.len() * 2) as u32, lpData: w.as_ptr() as *mut _ };
+                        let _ = SendMessageW(other, WM_COPYDATA, None, Some(LPARAM(&cds as *const _ as isize)));
+                    }
+                    None => {
+                        let _ = PostMessageW(Some(other), WM_APP_CAPTURE, WPARAM(0), LPARAM(0));
+                    }
+                }
             }
         }
         return;
@@ -139,6 +156,7 @@ pub fn run() {
             overlay,
             card,
             editor: None,
+            veditor: None,
             instance,
             recbar,
             rec: None,
@@ -153,6 +171,9 @@ pub fn run() {
         unsafe {
             let _ = PostMessageW(Some(msg), WM_APP_CAPTURE, WPARAM(0), LPARAM(0));
         }
+    }
+    if let Some(p) = want_edit {
+        with_app(|a| a.open_video_editor(p));
     }
 
     unsafe {
@@ -176,6 +197,7 @@ fn register_classes(instance: HINSTANCE) {
             (class_name::CARD, Some(card_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DROPSHADOW),
             (class_name::BAR, Some(bar_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DROPSHADOW),
             (class_name::EDITOR, Some(editor_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DBLCLKS),
+            (class_name::VEDITOR, Some(veditor_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DBLCLKS),
             (class_name::OUTLINE, Some(outline_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), WNDCLASS_STYLES(0)),
         ] {
             let wc = WNDCLASSEXW {
@@ -389,9 +411,29 @@ impl App {
         }
     }
 
+    fn open_video_editor(&mut self, path: PathBuf) {
+        self.card.hide();
+        if let Some(old) = self.veditor.take() {
+            unsafe {
+                let _ = DestroyWindow(old.hwnd);
+            }
+        }
+        let style = (Tool::parse(&self.cfg.ed_tool), Color::from_hex(self.cfg.ed_color), self.cfg.ed_width as usize);
+        match VEditor::open(self.instance, &self.gfx, path, crate::annot::font::shared(), style) {
+            Ok(e) => self.veditor = Some(e),
+            Err(err) => {
+                log(&format!("cannot open the video editor: {err}"));
+                let text = super::util::wide(&format!("Can't open this video: {err}"));
+                unsafe {
+                    MessageBoxW(None, windows::core::PCWSTR(text.as_ptr()), w!("Rengi Snap"), MB_OK | MB_ICONWARNING);
+                }
+            }
+        }
+    }
+
     fn remember_style(&mut self, tool: Option<Tool>, color: Color, width: usize) {
         if let Some(t) = tool {
-            if t != Tool::Crop {
+            if t != Tool::Crop && t != Tool::Zoom {
                 self.cfg.ed_tool = t.name().into();
             }
         }
@@ -541,6 +583,10 @@ impl App {
                 let (src, frames, notify) = (v.path.clone(), v.frames, self.msg.0 as isize);
                 self.card.set_status("Making GIF...".into());
                 std::thread::spawn(move || export_gif(src, frames, notify));
+            }
+            Button::Edit => {
+                let p = v.path.clone();
+                self.open_video_editor(p);
             }
             Button::Close => self.card.hide(),
             _ => {}
@@ -887,6 +933,76 @@ unsafe extern "system" fn editor_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
+fn on_veditor_event(ev: veditor::Event) {
+    match ev {
+        veditor::Event::CustomColor => {
+            let Some((owner, start)) = with_app(|a| a.veditor.as_ref().map(|e| (e.hwnd, e.custom))).flatten() else { return };
+            if let Some(c) = pick_color(owner, start) {
+                with_app(|a| {
+                    if let Some(e) = a.veditor.as_mut() {
+                        e.custom = c;
+                        e.set_color(c);
+                    }
+                });
+            }
+        }
+        veditor::Event::Exported(p) => log(&format!("video exported: {}", p.display())),
+    }
+}
+
+/// Windows file dialog for a video to edit. Runs with no borrow held.
+fn choose_video(owner: HWND) -> Option<PathBuf> {
+    use windows::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW};
+    let filter: Vec<u16> = "Videos (*.mp4;*.mov;*.m4v;*.wmv)\0*.mp4;*.mov;*.m4v;*.wmv\0All files\0*.*\0\0".encode_utf16().collect();
+    let mut buf = vec![0u16; 4096];
+    let dir = super::util::wide(&with_app(|a| a.current_folder()).unwrap_or_default().to_string_lossy());
+    unsafe {
+        let mut ofn = OPENFILENAMEW {
+            lStructSize: size_of::<OPENFILENAMEW>() as u32,
+            hwndOwner: owner,
+            lpstrFilter: windows::core::PCWSTR(filter.as_ptr()),
+            lpstrFile: windows::core::PWSTR(buf.as_mut_ptr()),
+            nMaxFile: buf.len() as u32,
+            lpstrInitialDir: windows::core::PCWSTR(dir.as_ptr()),
+            Flags: OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST,
+            ..Default::default()
+        };
+        if GetOpenFileNameW(&mut ofn).as_bool() {
+            let n = buf.iter().position(|c| *c == 0).unwrap_or(0);
+            return Some(PathBuf::from(String::from_utf16_lossy(&buf[..n])));
+        }
+    }
+    None
+}
+
+unsafe extern "system" fn veditor_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_DESTROY {
+        with_app(|a| {
+            if a.veditor.as_ref().is_some_and(|e| e.hwnd == hwnd) {
+                if let Some(st) = a.veditor.as_ref().map(|e| e.style()) {
+                    a.remember_style(Some(st.0), st.1, st.2);
+                }
+                a.veditor = None;
+            }
+        });
+        return LRESULT(0);
+    }
+    let r = with_app(|a| {
+        let App { veditor, gfx, .. } = a;
+        veditor.as_mut().filter(|e| e.hwnd == hwnd).map(|e| e.handle(gfx, msg, wp, lp))
+    })
+    .flatten();
+    if let Some((res, ev)) = r {
+        if let Some(ev) = ev {
+            on_veditor_event(ev);
+        }
+        if let Some(res) = res {
+            return res;
+        }
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+}
+
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if let Some((res, click, tick)) = with_app(|a| a.recbar.handle(msg, wp, lp)) {
         if tick {
@@ -933,8 +1049,30 @@ unsafe extern "system" fn card_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
+/// WM_COPYDATA tag: the payload is a UTF-16 path to open in the video editor.
+const COPY_EDIT: usize = 0x5245_4544;
+
 unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        WM_COPYDATA => {
+            let cds = unsafe { &*(lp.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT) };
+            if cds.dwData == COPY_EDIT && !cds.lpData.is_null() {
+                let w = unsafe { std::slice::from_raw_parts(cds.lpData as *const u16, cds.cbData as usize / 2) };
+                let p = PathBuf::from(String::from_utf16_lossy(w));
+                // Open after returning, so the sender isn't kept waiting.
+                PENDING_EDIT.with(|e| *e.borrow_mut() = Some(p));
+                unsafe {
+                    let _ = PostMessageW(Some(hwnd), WM_APP_EDIT, WPARAM(0), LPARAM(0));
+                }
+                return LRESULT(1);
+            }
+        }
+        m if m == WM_APP_EDIT => {
+            if let Some(p) = PENDING_EDIT.with(|e| e.borrow_mut().take()) {
+                with_app(|a| a.open_video_editor(p));
+            }
+            return LRESULT(0);
+        }
         WM_APP_CAPTURE => {
             with_app(|a| a.start_capture());
             return LRESULT(0);
@@ -950,6 +1088,11 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         // Let the menu fade out before freezing the screen.
                         unsafe {
                             let _ = PostMessageW(Some(hwnd), WM_APP_CAPTURE, WPARAM(0), LPARAM(0));
+                        }
+                    }
+                    tray::CMD_EDIT_VIDEO => {
+                        if let Some(p) = choose_video(hwnd) {
+                            with_app(|a| a.open_video_editor(p));
                         }
                     }
                     tray::CMD_OPEN_FOLDER => {

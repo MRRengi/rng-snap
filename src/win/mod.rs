@@ -15,6 +15,9 @@ mod record;
 mod toolstrip;
 mod tray;
 mod util;
+mod vexport;
+mod veditor;
+mod vplayer;
 mod wins;
 
 pub use app::run;
@@ -30,6 +33,8 @@ pub const WM_APP_KEY: u32 = WM_APP + 3;
 pub const WM_APP_ELEMENTS: u32 = WM_APP + 4;
 /// GIF export progress: wParam = percent, 1000 = done, 1001 = failed.
 pub const WM_APP_GIF: u32 = WM_APP + 5;
+/// Open the video handed over by another instance.
+pub const WM_APP_EDIT: u32 = WM_APP + 6;
 /// The editor changed the image: copy it after a short pause.
 pub const AUTOCOPY_TIMER: usize = 7;
 
@@ -41,4 +46,5 @@ pub mod class_name {
     pub const BAR: PCWSTR = w!("RengiSnapBar");
     pub const OUTLINE: PCWSTR = w!("RengiSnapOutline");
     pub const EDITOR: PCWSTR = w!("RengiSnapEditor");
+    pub const VEDITOR: PCWSTR = w!("RengiSnapVideoEditor");
 }

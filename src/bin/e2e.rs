@@ -659,6 +659,106 @@ mod e2e {
         sample: Option<Frame>,
     }
 
+    /// A 4 s, 640x360, 30 fps test clip: background red / green / blue / yellow
+    /// for seconds 0..4, a white box at (40,40)-(200,130), and a tone on even
+    /// seconds. Software H.264 + AAC, so it works on any runner.
+    fn make_test_video(path: &Path) -> Result<(), String> {
+        use windows::Win32::Media::MediaFoundation::*;
+        let e = |r: windows::core::Result<()>, w: &str| r.map_err(|x| format!("{w}: {x}"));
+        let (w, h, fps) = (640u32, 360u32, 30u32);
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+            let _ = MFStartup(MF_VERSION, 0);
+            let _ = std::fs::remove_file(path);
+            let writer = MFCreateSinkWriterFromURL(&windows::core::HSTRING::from(path.as_os_str()), None, None).map_err(|x| format!("writer: {x}"))?;
+            let vt = |sub: &windows::core::GUID| -> Result<IMFMediaType, String> {
+                let t = MFCreateMediaType().map_err(|x| x.to_string())?;
+                e(t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video), "major")?;
+                e(t.SetGUID(&MF_MT_SUBTYPE, sub), "sub")?;
+                e(t.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32), "il")?;
+                e(t.SetUINT64(&MF_MT_FRAME_SIZE, (w as u64) << 32 | h as u64), "size")?;
+                e(t.SetUINT64(&MF_MT_FRAME_RATE, (fps as u64) << 32 | 1), "rate")?;
+                e(t.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, 1u64 << 32 | 1), "par")?;
+                Ok(t)
+            };
+            let out_t = vt(&MFVideoFormat_H264)?;
+            e(out_t.SetUINT32(&MF_MT_AVG_BITRATE, 4_000_000), "bitrate")?;
+            let vs = writer.AddStream(&out_t).map_err(|x| format!("video stream: {x}"))?;
+            let in_t = vt(&MFVideoFormat_RGB32)?;
+            e(in_t.SetUINT32(&MF_MT_DEFAULT_STRIDE, w * 4), "stride")?;
+            e(writer.SetInputMediaType(vs, &in_t, None), "video input")?;
+            let at = |aac: bool| -> Result<IMFMediaType, String> {
+                let t = MFCreateMediaType().map_err(|x| x.to_string())?;
+                e(t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio), "major")?;
+                e(t.SetGUID(&MF_MT_SUBTYPE, if aac { &MFAudioFormat_AAC } else { &MFAudioFormat_PCM }), "sub")?;
+                e(t.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16), "bits")?;
+                e(t.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, 48_000), "rate")?;
+                e(t.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2), "ch")?;
+                if aac {
+                    e(t.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 24_000), "aac")?;
+                } else {
+                    e(t.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 4), "align")?;
+                    e(t.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 192_000), "bps")?;
+                }
+                Ok(t)
+            };
+            let aus = writer.AddStream(&at(true)?).map_err(|x| format!("audio stream: {x}"))?;
+            e(writer.SetInputMediaType(aus, &at(false)?, None), "audio input")?;
+            e(writer.BeginWriting(), "begin")?;
+            let write = |stream: u32, bytes: &[u8], t: i64, d: i64| -> Result<(), String> {
+                let buf = MFCreateMemoryBuffer(bytes.len() as u32).map_err(|x| x.to_string())?;
+                let mut ptr = std::ptr::null_mut();
+                e(buf.Lock(&mut ptr, None, None), "lock")?;
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+                let _ = buf.Unlock();
+                e(buf.SetCurrentLength(bytes.len() as u32), "len")?;
+                let smp = MFCreateSample().map_err(|x| x.to_string())?;
+                e(smp.AddBuffer(&buf), "add")?;
+                e(smp.SetSampleTime(t), "t")?;
+                e(smp.SetSampleDuration(d), "d")?;
+                e(writer.WriteSample(stream, &smp), "write")
+            };
+            for sec in 0..4i64 {
+                let pcm: Vec<i16> = (0..48_000 * 2)
+                    .map(|i| if sec % 2 == 0 { ((i / 2) as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() as f32 * 8000.0 } else { 0.0 } as i16)
+                    .collect();
+                let bytes = std::slice::from_raw_parts(pcm.as_ptr() as *const u8, pcm.len() * 2);
+                write(aus, bytes, sec * 10_000_000, 10_000_000)?;
+            }
+            let colors: [[u8; 4]; 4] = [[0, 0, 255, 255], [0, 255, 0, 255], [255, 0, 0, 255], [0, 255, 255, 255]];
+            for k in 0..(4 * fps) as i64 {
+                let c = colors[(k / fps as i64) as usize];
+                let mut px = Vec::with_capacity((w * h * 4) as usize);
+                // Positive stride: rows top-down.
+                for y in 0..h {
+                    for x in 0..w {
+                        let white = (40..200).contains(&x) && (40..130).contains(&y);
+                        px.extend_from_slice(if white { &[255, 255, 255, 255] } else { &c });
+                    }
+                }
+                write(vs, &px, k * 10_000_000 / fps as i64, 10_000_000 / fps as i64)?;
+            }
+            e(writer.Finalize(), "finalize")?;
+        }
+        Ok(())
+    }
+
+    /// Decodes and returns the frames with the given indices.
+    fn frames_at(path: &Path, want: &[u32]) -> Vec<Option<Frame>> {
+        let mut out: Vec<Option<Frame>> = vec![None; want.len()];
+        let Ok(mut r) = crate::mp4read::Reader::open(path) else { return out };
+        let mut i = 0u32;
+        while let Some((_, f)) = r.next() {
+            for (k, w) in want.iter().enumerate() {
+                if *w == i {
+                    out[k] = Some(f.clone());
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
     fn inspect(path: &Path) -> Result<VideoInfo, String> {
         let mut r = crate::mp4read::Reader::open(path)?;
         let (w, h, audio) = (r.w, r.h, r.has_audio());
@@ -1179,7 +1279,8 @@ mod e2e {
             rep.check("V2 Copy puts the video file on the clipboard", hdrop, "");
             // V3: GIF export.
             let gifs = files_with("gif").len();
-            click_at(r.left + 290, r.bottom - 29);
+            // Card buttons: Copy, Save to, Folder, GIF, Edit (64 px each after a 10 px pad).
+            click_at(r.left + 10 + 64 * 3 + 32, r.bottom - 29);
             let made = wait(30000, || files_with("gif").len() > gifs) && {
                 sleep(1500);
                 true
@@ -1412,6 +1513,128 @@ mod e2e {
             }
         } else {
             rep.line("explorer window not found");
+        }
+
+        // VE: video editor on a synthetic clip (1 s each red, green, blue,
+        // yellow; white box top-left; tone on even seconds): split at 1 s and
+        // 3 s, delete the middle, drag yellow to the front, text at 0 s, zoom
+        // onto the white box from 1.2 s, export, check the frames.
+        let ve_src = pictures().join("ve-src.mp4");
+        let ve_out = pictures().join("ve-src edit.mp4");
+        let _ = std::fs::create_dir_all(pictures());
+        let _ = std::fs::remove_file(&ve_out);
+        if let Some(ex) = find(w!("CabinetWClass")) {
+            unsafe {
+                let _ = PostMessageW(Some(ex), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+        }
+        match make_test_video(&ve_src) {
+            Err(e) => rep.check("VE test video written", false, &e),
+            Ok(()) => {
+                let _ = Command::new(&exe).env("RENGI_SNAP_HOME", &home).env("RENGI_SNAP_NO_AUTOSTART", "1").arg("--edit").arg(&ve_src).spawn();
+                let opened = wait(10_000, || visible(w!("RengiSnapVideoEditor")));
+                rep.check("VE --edit opens the video editor", opened, "");
+                if opened {
+                    let ed = find(w!("RengiSnapVideoEditor")).unwrap();
+                    unsafe {
+                        let _ = SetWindowPos(ed, Some(HWND_TOP), 10, 10, 1004, 740, SWP_SHOWWINDOW);
+                        let _ = SetForegroundWindow(ed);
+                    }
+                    sleep(2500);
+                    let cl = client_screen(ed);
+                    // Layout of veditor.rs at 100% DPI.
+                    let (cw, ch) = (cl.width() as f32, cl.height() as f32);
+                    let top = (ch - 186.0).max(52.0 + 60.0);
+                    let ruler_y = cl.top + (top + 44.0 + 9.0) as i32;
+                    let clips_y = cl.top + (top + 44.0 + 20.0 + 32.0) as i32;
+                    let (x0, x1) = (16.0f32, cw - 16.0);
+                    let xt = |t: u32, total: u32| cl.left + (x0 + (x1 - x0) * t as f32 / total as f32).round() as i32;
+                    let (aw, ah) = (cw - 32.0, top - 52.0 - 32.0);
+                    let k = (aw / 640.0).min(ah / 360.0);
+                    let (pw, ph) = (640.0 * k, 360.0 * k);
+                    let (pl, pt) = (((cw - pw) / 2.0).round(), (52.0 + 16.0 + (ah - ph) / 2.0).round());
+                    let src_pt = |x: f32, y: f32| (cl.left + (pl + x * k) as i32, cl.top + (pt + y * k) as i32);
+                    rep.line(&format!("VE client {cl:?}, preview at ({pl},{pt}) x{k:.3}"));
+                    screenshot(&rep.dir, "ve0-editor");
+                    click_at(xt(1000, 4000), ruler_y);
+                    sleep(300);
+                    tap(VK_S);
+                    sleep(300);
+                    click_at(xt(3000, 4000), ruler_y);
+                    sleep(300);
+                    tap(VK_S);
+                    sleep(300);
+                    click_at(xt(2000, 4000), clips_y);
+                    sleep(300);
+                    tap(VK_DELETE);
+                    sleep(500);
+                    screenshot(&rep.dir, "ve1-cut");
+                    drag_to((xt(1500, 2000), clips_y), (cl.left + 20, clips_y));
+                    sleep(600);
+                    screenshot(&rep.dir, "ve2-reordered");
+                    click_at(xt(0, 2000) + 1, ruler_y);
+                    sleep(300);
+                    tap(VK_T);
+                    sleep(150);
+                    let tp = src_pt(300.0, 250.0);
+                    click_at(tp.0, tp.1);
+                    sleep(200);
+                    type_text("Hi");
+                    sleep(100);
+                    tap(VK_ESCAPE);
+                    sleep(300);
+                    click_at(xt(1200, 2000), ruler_y);
+                    sleep(300);
+                    tap(VK_Z);
+                    sleep(150);
+                    drag_to(src_pt(40.0, 40.0), src_pt(200.0, 130.0));
+                    sleep(300);
+                    tap(VK_V);
+                    sleep(300);
+                    click_at(xt(1900, 2000), ruler_y);
+                    sleep(700);
+                    screenshot(&rep.dir, "ve3-zoomed-preview");
+                    ctrl_tap(VK_E);
+                    let made = wait(120_000, || ve_out.exists());
+                    rep.check("VE export writes <name> edit.mp4", made, "");
+                    sleep(800);
+                    screenshot(&rep.dir, "ve4-exported");
+                    if made {
+                        match inspect(&ve_out) {
+                            Ok(i) => {
+                                rep.line(&format!("VE out: {}x{} {} frames {:.2}s audio {}", i.w, i.h, i.frames, i.seconds, i.audio));
+                                rep.check("VE output is 2 s long", (1.8..=2.2).contains(&i.seconds) && (54..=66).contains(&i.frames), &format!("{:.2}s {} frames", i.seconds, i.frames));
+                                rep.check("VE output keeps the audio", i.audio, "");
+                            }
+                            Err(e) => rep.check("VE output decodes", false, &e),
+                        }
+                        let fr = frames_at(&ve_out, &[12, 40, 58]);
+                        let px = |f: &Frame, x: i32, y: i32| f.pixel(x, y).unwrap_or([0, 0, 0]);
+                        let is = |p: [u8; 3], b: bool, g: bool, r: bool| (p[0] > 160) == b && (p[1] > 160) == g && (p[2] > 160) == r;
+                        if let Some(f) = &fr[0] {
+                            let p = px(f, 520, 300);
+                            rep.check("VE 0.4 s is yellow (moved to the front)", is(p, false, true, true), &format!("{p:?}"));
+                            let reds = (260..360).flat_map(|x| (215..265).map(move |y| (x, y))).filter(|&(x, y)| is(px(f, x, y), false, false, true)).count();
+                            rep.check("VE 0.4 s shows the text", reds > 40, &format!("{reds} red px"));
+                            let _ = std::fs::write(rep.dir.join("ve5-out-0.4s.png"), f.encode_png());
+                        }
+                        if let Some(f) = &fr[1] {
+                            let p = px(f, 520, 300);
+                            rep.check("VE 1.3 s is red (first second of the source)", is(p, false, false, true), &format!("{p:?}"));
+                        }
+                        if let Some(f) = &fr[2] {
+                            let white = f.pixels.chunks_exact(4).filter(|p| p[0] > 200 && p[1] > 200 && p[2] > 200).count();
+                            let share = white * 100 / (f.width() * f.height()).max(1);
+                            rep.check("VE 1.9 s is zoomed onto the white box", share > 80, &format!("{share}% white"));
+                            let _ = std::fs::write(rep.dir.join("ve6-out-1.9s.png"), f.encode_png());
+                        }
+                    }
+                    unsafe {
+                        let _ = PostMessageW(Some(ed), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    }
+                    rep.check("VE editor closes", wait(4000, || find(w!("RengiSnapVideoEditor")).is_none()), "");
+                }
+            }
         }
 
         let scroll_after = unsafe { GetKeyState(VK_SCROLL.0 as i32) } & 1;

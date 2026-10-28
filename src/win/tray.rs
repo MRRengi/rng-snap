@@ -8,6 +8,7 @@ pub const CMD_CAPTURE: usize = 1;
 pub const CMD_OPEN_FOLDER: usize = 2;
 pub const CMD_AUTOSTART: usize = 3;
 pub const CMD_EXIT: usize = 4;
+pub const CMD_EDIT_VIDEO: usize = 5;
 
 fn data(hwnd: HWND, icon: HICON) -> NOTIFYICONDATAW {
     let mut nid = NOTIFYICONDATAW {
@@ -44,8 +45,9 @@ pub fn remove(hwnd: HWND) {
 pub fn menu(hwnd: HWND, autostart: bool) -> usize {
     unsafe {
         let Ok(m) = CreatePopupMenu() else { return 0 };
-        let items: [(usize, &str, bool); 3] = [
+        let items: [(usize, &str, bool); 4] = [
             (CMD_CAPTURE, "Capture", false),
+            (CMD_EDIT_VIDEO, "Edit a video...", false),
             (CMD_OPEN_FOLDER, "Open captures folder", false),
             (CMD_AUTOSTART, "Start with Windows", autostart),
         ];

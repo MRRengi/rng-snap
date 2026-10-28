@@ -58,6 +58,8 @@ pub struct TextEdit {
     pub text: String,
     pub size: f32,
     pub color: Color,
+    /// Video editor: on-screen time of the text.
+    pub span: Option<(u32, u32)>,
     before: Snap,
 }
 
@@ -78,6 +80,11 @@ pub struct Canvas {
     pub crop_draft: Option<(P, P)>,
     /// Bumped on every visible change; renderers cache on it.
     pub version: u64,
+    /// Video editor: the playhead (ms). Only items on screen then can be
+    /// seen, picked and edited; new items start here.
+    pub time: Option<u32>,
+    /// Video editor: how long new items stay on screen (ms).
+    pub span_len: u32,
     undo: Vec<Snap>,
     redo: Vec<Snap>,
     drag: Drag,
@@ -126,6 +133,8 @@ impl Canvas {
             text: None,
             crop_draft: None,
             version: 0,
+            time: None,
+            span_len: 3000,
             undo: Vec::new(),
             redo: Vec::new(),
             drag: Drag::None,
@@ -183,29 +192,56 @@ impl Canvas {
 
     /// Items to render now: committed ones plus the draft and the text being typed.
     pub fn preview(&self) -> Vec<Item> {
-        let mut v = self.items.clone();
+        let mut v: Vec<Item> = self.items.iter().filter(|it| it.visible_at(self.time)).cloned().collect();
         if let Some(d) = &self.draft {
             v.push(d.clone());
         }
         if let Some(t) = &self.text {
-            let item = Item { shape: Shape::Text { at: t.at, text: t.text.clone(), size: t.size }, color: t.color, width: 0.0 };
-            match t.idx {
-                Some(i) if i <= v.len() => v.insert(i, item),
-                _ => v.push(item),
-            }
+            let item = Item { shape: Shape::Text { at: t.at, text: t.text.clone(), size: t.size }, color: t.color, width: 0.0, span: None };
+            v.push(item);
         }
         v
+    }
+
+    /// Span for an item created now.
+    fn new_span(&self) -> Option<(u32, u32)> {
+        self.time.map(|t| (t, t + self.span_len.max(100)))
+    }
+
+    /// Replaces every item (video editor undo); clears selection and drafts.
+    pub fn set_items(&mut self, items: Vec<Item>) {
+        self.items = items;
+        self.selected = None;
+        self.draft = None;
+        self.text = None;
+        self.drag = Drag::None;
+        self.version += 1;
+    }
+
+    /// Moves the playhead; drops a selection that is no longer on screen.
+    pub fn set_time(&mut self, t: u32) {
+        if self.time == Some(t) {
+            return;
+        }
+        self.time = Some(t);
+        if let Some(i) = self.selected {
+            if !self.items.get(i).is_some_and(|it| it.visible_at(self.time)) {
+                self.selected = None;
+            }
+        }
+        self.version += 1;
     }
 
     /// Topmost item under the point.
     pub fn hit(&self, p: P) -> Option<usize> {
         let tol = 5.0 * self.scale;
-        self.items.iter().enumerate().rev().find_map(|(i, it)| {
+        self.items.iter().enumerate().rev().filter(|(_, it)| it.visible_at(self.time)).find_map(|(i, it)| {
             let w = it.width / 2.0 + tol;
             let ok = match &it.shape {
                 Shape::Arrow { a, b } => seg_dist(p, *a, *b) <= w.max(it.width * 2.0),
                 Shape::Line { a, b } => seg_dist(p, *a, *b) <= w,
-                Shape::Rect { a, b } => {
+                Shape::Rect { a, b } | Shape::Zoom { a, b } => {
+                    let w = if matches!(it.shape, Shape::Zoom { .. }) { tol * 1.5 } else { w };
                     let (l, t, r, bt) = norm(*a, *b);
                     let inside = p.x >= l - w && p.x <= r + w && p.y >= t - w && p.y <= bt + w;
                     let deep = p.x > l + w && p.x < r - w && p.y > t + w && p.y < bt - w;
@@ -240,7 +276,7 @@ impl Canvas {
         let Some(it) = self.selected.and_then(|i| self.items.get(i)) else { return Vec::new() };
         match &it.shape {
             Shape::Arrow { a, b } | Shape::Line { a, b } => vec![(Handle::A, *a), (Handle::B, *b)],
-            Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } => {
+            Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } | Shape::Zoom { a, b } => {
                 let (l, t, r, bt) = norm(*a, *b);
                 vec![
                     (Handle::Corner(0), P::new(l, t)),
@@ -331,7 +367,7 @@ impl Canvas {
     pub fn mouse_down(&mut self, p: P, _shift: bool) -> Change {
         let mut c = Change::None;
         if let Some(t) = &self.text {
-            let it = Item { shape: Shape::Text { at: t.at, text: t.text.clone(), size: t.size }, color: t.color, width: 0.0 };
+            let it = Item { shape: Shape::Text { at: t.at, text: t.text.clone(), size: t.size }, color: t.color, width: 0.0, span: None };
             let (l, tp, r, b) = bbox(&it, self.fonts());
             if p.x >= l && p.x <= r && p.y >= tp && p.y <= b {
                 return Change::None;
@@ -353,22 +389,23 @@ impl Canvas {
                 self.bump(if changed { Change::Redraw.max_with(c) } else { c })
             }
             _ if !self.inside(p) => c,
-            Tool::Arrow | Tool::Line | Tool::Rect | Tool::Ellipse | Tool::Blur => {
+            Tool::Arrow | Tool::Line | Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Zoom => {
                 let shape = match self.tool {
                     Tool::Arrow => Shape::Arrow { a: p, b: p },
                     Tool::Line => Shape::Line { a: p, b: p },
                     Tool::Rect => Shape::Rect { a: p, b: p },
                     Tool::Ellipse => Shape::Ellipse { a: p, b: p },
+                    Tool::Zoom => Shape::Zoom { a: p, b: p },
                     _ => Shape::Blur { a: p, b: p, mode: self.blur_mode },
                 };
-                self.draft = Some(Item { shape, color: self.color, width: self.width() });
+                self.draft = Some(Item { shape, color: self.color, width: self.width(), span: self.new_span() });
                 self.drag = Drag::Create;
                 self.selected = None;
                 self.bump(Change::Redraw.max_with(c))
             }
             Tool::Pen | Tool::Highlighter => {
                 let shape = if self.tool == Tool::Pen { Shape::Pen { pts: vec![p] } } else { Shape::Highlighter { pts: vec![p] } };
-                self.draft = Some(Item { shape, color: self.color, width: self.width() });
+                self.draft = Some(Item { shape, color: self.color, width: self.width(), span: self.new_span() });
                 self.drag = Drag::Create;
                 self.selected = None;
                 self.bump(Change::Redraw.max_with(c))
@@ -376,13 +413,13 @@ impl Canvas {
             Tool::Text => {
                 let size = TEXT_SIZES[self.width_idx] * self.scale;
                 self.selected = None;
-                self.text = Some(TextEdit { idx: None, at: P::new(p.x, p.y - size * 0.6), text: String::new(), size, color: self.color, before: self.snap() });
+                self.text = Some(TextEdit { idx: None, at: P::new(p.x, p.y - size * 0.6), text: String::new(), size, color: self.color, span: self.new_span(), before: self.snap() });
                 self.bump(Change::Redraw.max_with(c))
             }
             Tool::Step => {
                 let before = self.snap();
                 let r = STEP_RADII[self.width_idx] * self.scale;
-                self.items.push(Item { shape: Shape::Step { c: p, r }, color: self.color, width: 0.0 });
+                self.items.push(Item { shape: Shape::Step { c: p, r }, color: self.color, width: 0.0, span: self.new_span() });
                 self.selected = None;
                 self.push(before);
                 self.bump(Change::Committed)
@@ -404,7 +441,7 @@ impl Canvas {
                 match &mut d.shape {
                     Shape::Arrow { a, b } | Shape::Line { a, b } => *b = if shift { snap45(*a, q) } else { q },
                     Shape::Rect { a, b } | Shape::Ellipse { a, b } => *b = if shift { square(*a, q) } else { q },
-                    Shape::Blur { b, .. } => *b = q,
+                    Shape::Blur { b, .. } | Shape::Zoom { b, .. } => *b = q,
                     Shape::Pen { pts } | Shape::Highlighter { pts } => {
                         if pts.last().is_none_or(|l| l.dist(q) >= 1.5) {
                             pts.push(q);
@@ -433,7 +470,7 @@ impl Canvas {
                             Handle::A => *a = q,
                             _ => *b = q,
                         },
-                        Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } => {
+                        Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } | Shape::Zoom { a, b } => {
                             let (l, t, r, bt) = norm(*a, *b);
                             let (na, nb) = match h {
                                 Handle::Corner(0) => (q, P::new(r, bt)),
@@ -467,7 +504,7 @@ impl Canvas {
                 let Some(d) = self.draft.take() else { return Change::None };
                 let keep = match &d.shape {
                     Shape::Arrow { a, b } | Shape::Line { a, b } => a.dist(*b) >= 4.0,
-                    Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } => {
+                    Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } | Shape::Zoom { a, b } => {
                         let (l, t, r, bt) = norm(*a, *b);
                         r - l >= 3.0 && bt - t >= 3.0
                     }
@@ -509,10 +546,11 @@ impl Canvas {
         let before = self.snap();
         if let Shape::Text { at, text, size } = self.items[i].shape.clone() {
             let color = self.items[i].color;
+            let span = self.items[i].span;
             self.items.remove(i);
             self.selected = None;
             self.drag = Drag::None;
-            self.text = Some(TextEdit { idx: Some(i), at, text, size, color, before });
+            self.text = Some(TextEdit { idx: Some(i), at, text, size, color, span, before });
             return self.bump(Change::Redraw);
         }
         Change::None
@@ -522,7 +560,7 @@ impl Canvas {
     pub fn finish_text(&mut self) -> Change {
         let Some(t) = self.text.take() else { return Change::None };
         if !t.text.trim().is_empty() {
-            let item = Item { shape: Shape::Text { at: t.at, text: t.text, size: t.size }, color: t.color, width: 0.0 };
+            let item = Item { shape: Shape::Text { at: t.at, text: t.text, size: t.size }, color: t.color, width: 0.0, span: t.span };
             match t.idx {
                 Some(i) if i <= self.items.len() => self.items.insert(i, item),
                 _ => self.items.push(item),

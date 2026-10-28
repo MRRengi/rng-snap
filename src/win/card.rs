@@ -142,7 +142,7 @@ impl Card {
         self.buttons.clear();
         let row_top = pad + th + px(4.0) + status_h;
         let row: Vec<Button> = if video {
-            vec![Button::Copy, Button::SaveTo, Button::Folder, Button::Gif]
+            vec![Button::Copy, Button::SaveTo, Button::Folder, Button::Gif, Button::Edit]
         } else {
             vec![Button::Copy, Button::Save, Button::SaveTo, Button::Folder, Button::Edit]
         };

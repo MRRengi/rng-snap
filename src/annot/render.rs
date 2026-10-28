@@ -102,7 +102,7 @@ pub fn bbox(item: &Item, fonts: Option<&Fonts>) -> (f32, f32, f32, f32) {
     match &item.shape {
         Shape::Arrow { a, b } => grow(norm(*a, *b), (item.width * 3.6 + 8.0) * 0.6),
         Shape::Line { a, b } | Shape::Rect { a, b } | Shape::Ellipse { a, b } => grow(norm(*a, *b), pad),
-        Shape::Blur { a, b, .. } => norm(*a, *b),
+        Shape::Blur { a, b, .. } | Shape::Zoom { a, b } => norm(*a, *b),
         Shape::Pen { pts } | Shape::Highlighter { pts } => {
             let w = if matches!(item.shape, Shape::Highlighter { .. }) { item.width * 3.2 } else { item.width };
             let l = pts.iter().map(|p| p.x).fold(f32::MAX, f32::min);
@@ -426,6 +426,7 @@ pub fn draw_item(p: &mut Pixmap, item: &Item, fonts: Option<&Fonts>, step_no: us
             }
         }
         Shape::Step { c: center, r } => draw_step(p, fonts, *center, *r, c, step_no, scale),
+        Shape::Zoom { .. } => {}
     }
 }
 
@@ -487,7 +488,7 @@ mod tests {
     }
 
     fn red_item(shape: Shape) -> Item {
-        Item { shape, color: PALETTE[0], width: 5.0 }
+        Item { shape, color: PALETTE[0], width: 5.0, span: None }
     }
 
     fn is_red(c: [u8; 4]) -> bool {
@@ -525,7 +526,7 @@ mod tests {
         // A black "text" pixel under the marker stays black.
         let i = (25 * 100 + 50) * 4;
         base.data_mut()[i..i + 4].copy_from_slice(&[0, 0, 0, 255]);
-        let it = Item { shape: Shape::Highlighter { pts: vec![P::new(10.0, 25.0), P::new(90.0, 25.0)] }, color: PALETTE[2], width: 5.0 };
+        let it = Item { shape: Shape::Highlighter { pts: vec![P::new(10.0, 25.0), P::new(90.0, 25.0)] }, color: PALETTE[2], width: 5.0, span: None };
         let out = render(&base, &[it], Rect::new(0, 0, 100, 50), None, 1.0);
         assert_eq!(px(&out, 50, 25)[..3], [0, 0, 0]);
         let y = px(&out, 30, 25);
@@ -608,7 +609,7 @@ mod demo {
                 c.copy_from_slice(&[40, 44, 52, 255]);
             }
         }
-        let it = |shape, c: usize, w: f32| Item { shape, color: PALETTE[c], width: w };
+        let it = |shape, c: usize, w: f32| Item { shape, color: PALETTE[c], width: w, span: None };
         let items = vec![
             it(Shape::Arrow { a: P::new(60.0, 420.0), b: P::new(300.0, 120.0) }, 0, 5.0),
             it(Shape::Arrow { a: P::new(80.0, 470.0), b: P::new(420.0, 380.0) }, 4, 3.0),

@@ -72,6 +72,8 @@ pub enum Tool {
     Blur,
     Step,
     Crop,
+    /// Video editor only: a camera zoom on part of the frame.
+    Zoom,
 }
 
 impl Tool {
@@ -88,6 +90,7 @@ impl Tool {
             Tool::Blur => 'B',
             Tool::Step => 'N',
             Tool::Crop => 'C',
+            Tool::Zoom => 'Z',
         }
     }
 
@@ -108,6 +111,7 @@ impl Tool {
             Tool::Blur => "Blur",
             Tool::Step => "Step",
             Tool::Crop => "Crop",
+            Tool::Zoom => "Zoom",
         }
     }
 
@@ -147,6 +151,8 @@ pub enum Shape {
     Text { at: P, text: String, size: f32 },
     Blur { a: P, b: P, mode: BlurMode },
     Step { c: P, r: f32 },
+    /// Video editor only: the camera zooms to this area. Never drawn into the image.
+    Zoom { a: P, b: P },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -154,12 +160,23 @@ pub struct Item {
     pub shape: Shape,
     pub color: Color,
     pub width: f32,
+    /// Video editor: when the item is on screen, as [start, end) in ms of the
+    /// edited video. None = always (screenshots).
+    pub span: Option<(u32, u32)>,
 }
 
 impl Item {
+    /// True when the item is on screen at `t` ms (always for screenshots).
+    pub fn visible_at(&self, t: Option<u32>) -> bool {
+        match (self.span, t) {
+            (Some((a, b)), Some(t)) => t >= a && t < b,
+            _ => true,
+        }
+    }
+
     pub fn translate(&mut self, dx: f32, dy: f32) {
         match &mut self.shape {
-            Shape::Arrow { a, b } | Shape::Line { a, b } | Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } => {
+            Shape::Arrow { a, b } | Shape::Line { a, b } | Shape::Rect { a, b } | Shape::Ellipse { a, b } | Shape::Blur { a, b, .. } | Shape::Zoom { a, b } => {
                 *a = a.offset(dx, dy);
                 *b = b.offset(dx, dy);
             }

@@ -104,6 +104,14 @@ pub fn tool_icon(t: Tool, n: u32) -> Pixmap {
             line(&mut p, &[(7.0, 3.5), (7.0, 17.0), (20.5, 17.0)], 2.0, 255);
             line(&mut p, &[(3.5, 7.0), (17.0, 7.0), (17.0, 20.5)], 2.0, 255);
         }
+        Tool::Zoom => {
+            if let Some(path) = PathBuilder::from_circle(10.0, 10.0, 6.0) {
+                p.stroke_path(&path, &white(255), &st(2.0), tr, None);
+            }
+            line(&mut p, &[(14.5, 14.5), (20.0, 20.0)], 2.6, 255);
+            line(&mut p, &[(7.5, 10.0), (12.5, 10.0)], 1.7, 255);
+            line(&mut p, &[(10.0, 7.5), (10.0, 12.5)], 1.7, 255);
+        }
     }
     p
 }
@@ -115,7 +123,7 @@ mod tests {
 
     #[test]
     fn every_icon_has_ink() {
-        for t in ALL_TOOLS {
+        for t in ALL_TOOLS.into_iter().chain([Tool::Zoom]) {
             let p = tool_icon(t, 24);
             let ink = p.data().chunks_exact(4).filter(|c| c[3] > 100).count();
             assert!(ink > 15, "{t:?} has {ink} pixels");

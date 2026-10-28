@@ -24,6 +24,10 @@ pub enum Btn {
     Save,
     SaveTo,
     OpenEditor,
+    /// Video editor: write the edited video.
+    Export,
+    /// Video editor: GIF of the edited video.
+    Gif,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +73,8 @@ fn label(b: Btn) -> Option<(&'static str, &'static str)> {
         Btn::Save => Some(("\u{E74E}", "Save")),
         Btn::SaveTo => Some(("\u{E792}", "Save to")),
         Btn::OpenEditor => Some(("\u{E70F}", "Editor")),
+        Btn::Export => Some(("\u{E74E}", "Export")),
+        Btn::Gif => Some(("\u{E8B9}", "GIF")),
         _ => None,
     }
 }
@@ -267,7 +273,7 @@ impl Strip {
                 _ => {
                     if let Some((g, text)) = label(b) {
                         let x0 = lr.left + 10.0 * s;
-                        let icon_c = if b == Btn::Copy { &accent } else { &fg };
+                        let icon_c = if b == Btn::Copy || b == Btn::Export { &accent } else { &fg };
                         d2d::draw_text(rt, &fonts.1, g, rect_f(x0, lr.top, x0 + 18.0 * s, lr.bottom), icon_c);
                         d2d::draw_text(rt, &fonts.0, text, rect_f(x0 + 24.0 * s, cy - 9.0 * s, lr.right, cy + 10.0 * s), &fg);
                     }
