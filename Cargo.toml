@@ -1,6 +1,6 @@
 [package]
 name = "rengi-snap"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 description = "Fast native screenshot and screen recording tool for Windows"
@@ -17,6 +17,9 @@ png = "0.18"
 serde = { version = "1", features = ["derive"] }
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 toml = "1"
+
+[build-dependencies]
+png = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 windows-numerics = "0.3"

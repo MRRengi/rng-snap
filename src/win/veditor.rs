@@ -6,7 +6,8 @@
 use super::class_name;
 use super::d2d::{self, Gfx, rect_f, rgba};
 use super::mp4read::Reader;
-use super::overlay::ACCENT;
+use super::theme::{self, Backdrop, Blur};
+use windows::core::Interface;
 use super::toolstrip::{Btn, Slot, Strip, StripState};
 use super::util::{lparam_point, log};
 use super::vaudio::AudioPlay;
@@ -27,7 +28,6 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::IDWriteTextFormat;
-use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -39,9 +39,7 @@ pub const WM_VFRAME: u32 = WM_APP + 40;
 pub const WM_VSTRIPS: u32 = WM_APP + 41;
 const TICK_TIMER: usize = 1;
 const STATUS_TIMER: usize = 2;
-const BG: u32 = 0x161618;
-const PANEL: u32 = 0x1E1E20;
-const ZOOM_COLOR: u32 = 0xA78BFA;
+const ANIM_TIMER: usize = 3;
 /// Pixels around a clip or bar edge that grab the edge instead of the body.
 const EDGE_PX: f32 = 7.0;
 
@@ -119,6 +117,8 @@ struct Work {
 #[derive(Clone, Copy, Default)]
 struct Lay {
     bar: f32,
+    /// The glass sheet holding transport and timeline.
+    sheet: D2D_RECT_F,
     /// Where the video picture is drawn.
     pic: D2D_RECT_F,
     transport: D2D_RECT_F,
@@ -166,6 +166,9 @@ pub struct VEditor {
     min_w: i32,
     /// Preview sound while playing.
     audio: Option<AudioPlay>,
+    scene: Option<(u32, u32, ID2D1BitmapRenderTarget)>,
+    blur: Blur,
+    hover_ctl: Option<u8>,
 }
 
 fn dpi_scale(h: HWND) -> f32 {
@@ -204,10 +207,7 @@ impl VEditor {
             .map_err(|e| e.to_string())?
         };
         let scale = dpi_scale(hwnd);
-        unsafe {
-            let dark = 1u32;
-            let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as *const _, 4);
-        }
+        theme::apply_window(hwnd);
         let timeline = Timeline::new(duration_ms);
         // Strokes and text sized for the video, not the screen.
         let mut canvas = Canvas::new(Rect::new(0, 0, src_w as i32, src_h as i32), (src_h as f32 / 720.0).max(1.0), fonts.clone());
@@ -254,9 +254,13 @@ impl VEditor {
             view_size: (0, 0),
             min_w: 0,
             audio: None,
+            scene: None,
+            blur: Blur::default(),
+            hover_ctl: None,
         };
+        ed.strip.animate = true;
         ed.strip.layout(gfx, &VSLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
-        ed.min_w = ed.strip.rect.width() + (16.0 * scale) as i32;
+        ed.min_w = ed.strip.rect.width() + (20.0 * scale) as i32;
         unsafe {
             let mut p = POINT::default();
             let _ = GetCursorPos(&mut p);
@@ -279,8 +283,22 @@ impl VEditor {
         (self.canvas.tool, self.canvas.color, self.canvas.width_idx)
     }
 
+    /// Height of the floating toolbar capsule.
     fn bar_h(&self) -> i32 {
-        (52.0 * self.scale).round() as i32
+        (48.0 * self.scale).round() as i32
+    }
+
+    fn margin(&self) -> f32 {
+        10.0 * self.scale
+    }
+
+    fn in_bar(&self, p: Point) -> bool {
+        self.strip.rect.contains(p)
+    }
+
+    pub fn theme_changed(&mut self) {
+        theme::apply_window(self.hwnd);
+        self.invalidate();
     }
 
     fn invalidate(&self) {
@@ -308,26 +326,30 @@ impl VEditor {
     fn lay(&self) -> Lay {
         let s = self.scale;
         let (cw, ch) = self.client();
-        let bar = self.bar_h() as f32;
-        let panel_h = 186.0 * s;
-        let top = (ch - panel_h).max(bar + 60.0 * s);
+        let m = self.margin();
+        let bar = self.bar_h() as f32 + m * 2.0;
+        let panel_h = 200.0 * s;
+        let sheet_top = (ch - panel_h - m).max(bar + 60.0 * s);
+        let sheet = rect_f(m, sheet_top, cw - m, ch - m);
+        let top = sheet.top;
         let pad = 16.0 * s;
-        let (aw, ah) = ((cw - pad * 2.0).max(20.0), (top - bar - pad * 2.0).max(20.0));
+        let (aw, ah) = ((cw - pad * 2.0).max(20.0), (top - bar - pad).max(20.0));
         let k = (aw / self.src_w as f32).min(ah / self.src_h as f32);
         let (pw, ph) = (self.src_w as f32 * k, self.src_h as f32 * k);
-        let pic = rect_f(((cw - pw) / 2.0).round(), (bar + pad + (ah - ph) / 2.0).round(), ((cw + pw) / 2.0).round(), (bar + pad + (ah + ph) / 2.0).round());
-        let x0 = pad;
-        let x1 = cw - pad;
-        let tr = rect_f(0.0, top, cw, top + 44.0 * s);
-        let bh = 30.0 * s;
+        let pic = rect_f(((cw - pw) / 2.0).round(), (bar + (ah - ph) / 2.0).round(), ((cw + pw) / 2.0).round(), (bar + (ah + ph) / 2.0).round());
+        let x0 = sheet.left + 16.0 * s;
+        let x1 = sheet.right - 16.0 * s;
+        let tr = rect_f(sheet.left, top + 6.0 * s, sheet.right, top + 52.0 * s);
+        let bh = 34.0 * s;
         let by = tr.top + (tr.bottom - tr.top - bh) / 2.0;
         let play = rect_f(x0, by, x0 + bh, by + bh);
-        let delete = rect_f(x1 - 86.0 * s, by, x1, by + bh);
-        let split = rect_f(delete.left - 8.0 * s - 86.0 * s, by, delete.left - 8.0 * s, by + bh);
+        let delete = rect_f(x1 - 92.0 * s, by, x1, by + bh);
+        let split = rect_f(delete.left - 6.0 * s - 96.0 * s, by, delete.left - 6.0 * s, by + bh);
         let ruler = rect_f(x0, tr.bottom, x1, tr.bottom + 18.0 * s);
         let clips = rect_f(x0, ruler.bottom + 2.0 * s, x1, ruler.bottom + 2.0 * s + 64.0 * s);
         let items = rect_f(x0, clips.bottom + 8.0 * s, x1, clips.bottom + 8.0 * s + 40.0 * s);
-        Lay { bar, pic, transport: tr, play, split, delete, ruler, clips, items, x0, x1 }
+        let tr = rect_f(tr.left, top, tr.right, tr.bottom);
+        Lay { bar, sheet, pic, transport: tr, play, split, delete, ruler, clips, items, x0, x1 }
     }
 
     fn total(&self) -> u32 {
@@ -642,9 +664,24 @@ impl VEditor {
             }
             _ => {}
         }
-        let bar = self.bar_h();
-        self.strip.layout(gfx, &VSLOTS, Point::new(0, 0), bar, w as i32, self.scale);
+        let mi = self.margin().round() as i32;
+        self.strip.layout(gfx, &VSLOTS, Point::new(0, mi), self.bar_h(), 0, self.scale);
+        let x = ((w as i32 - self.strip.rect.width()) / 2).max(mi);
+        self.strip.translate(x, 0);
+        let mut o = POINT::default();
+        unsafe {
+            let _ = ClientToScreen(self.hwnd, &mut o);
+        }
+        self.strip.publish("veditor", |r| r.offset(o.x, o.y));
         let l = self.lay();
+        let pr = |r: D2D_RECT_F| Rect::new(r.left as i32 + o.x, r.top as i32 + o.y, r.right as i32 + o.x, r.bottom as i32 + o.y);
+        super::uimap::put("veditor.play", pr(l.play));
+        super::uimap::put("veditor.split", pr(l.split));
+        super::uimap::put("veditor.delete", pr(l.delete));
+        super::uimap::put("veditor.ruler", pr(l.ruler));
+        super::uimap::put("veditor.clips", pr(l.clips));
+        super::uimap::put("veditor.items", pr(l.items));
+        super::uimap::put("veditor.pic", pr(l.pic));
         let vs = (((l.pic.right - l.pic.left) as u32).min(self.src_w).max(2), ((l.pic.bottom - l.pic.top) as u32).min(self.src_h).max(2));
         if vs != self.view_size {
             self.view_size = vs;
@@ -794,6 +831,13 @@ impl VEditor {
                     if self.canvas.text.is_some() {
                         self.invalidate();
                     }
+                } else if wp.0 == ANIM_TIMER {
+                    if !self.strip.step() {
+                        unsafe {
+                            let _ = KillTimer(Some(self.hwnd), ANIM_TIMER);
+                        }
+                    }
+                    self.invalidate();
                 } else if wp.0 == STATUS_TIMER {
                     unsafe {
                         let _ = KillTimer(Some(self.hwnd), STATUS_TIMER);
@@ -816,9 +860,20 @@ impl VEditor {
                 let p = lparam_point(lp.0);
                 self.last_cursor = p;
                 let (x, y) = (p.x as f32, p.y as f32);
-                let hov = if p.y < self.bar_h() { self.strip.hit(p) } else { None };
+                let hov = if self.in_bar(p) { self.strip.hit(p) } else { None };
+                let l = self.lay();
+                let (fx, fy) = (p.x as f32, p.y as f32);
+                let ctl = if inside(&l.play, fx, fy) { Some(1) } else if inside(&l.split, fx, fy) { Some(2) } else if inside(&l.delete, fx, fy) { Some(3) } else { None };
+                if ctl != self.hover_ctl {
+                    self.hover_ctl = ctl;
+                    self.invalidate();
+                }
                 if hov != self.strip.hover {
-                    self.strip.hover = hov;
+                    if self.strip.set_hover(hov) {
+                        unsafe {
+                            SetTimer(Some(self.hwnd), ANIM_TIMER, 15, None);
+                        }
+                    }
                     self.invalidate();
                 }
                 let l = self.lay();
@@ -880,7 +935,7 @@ impl VEditor {
                     SetCapture(self.hwnd);
                     let _ = SetFocus(Some(self.hwnd));
                 }
-                if p.y < self.bar_h() {
+                if self.in_bar(p) {
                     self.strip.press = self.strip.hit(p);
                     self.invalidate();
                     return (Some(LRESULT(0)), None);
@@ -998,7 +1053,7 @@ impl VEditor {
             WM_LBUTTONDBLCLK => {
                 let p = lparam_point(lp.0);
                 let l = self.lay();
-                if (p.y as f32) < l.transport.top && p.y >= self.bar_h() {
+                if (p.y as f32) < l.transport.top && !self.in_bar(p) {
                     let q = self.to_src(&l, p.x as f32, p.y as f32);
                     let c = self.canvas.double_click(q);
                     self.apply(c);
@@ -1095,7 +1150,7 @@ impl VEditor {
         let p = self.last_cursor;
         let (x, y) = (p.x as f32, p.y as f32);
         let l = self.lay();
-        let id = if p.y < self.bar_h() {
+        let id = if self.in_bar(p) {
             if self.strip.hit(p).is_some() { IDC_HAND } else { IDC_ARROW }
         } else if inside(&l.play, x, y) || inside(&l.split, x, y) || inside(&l.delete, x, y) {
             IDC_HAND
@@ -1131,12 +1186,26 @@ impl VEditor {
 
     // ---- drawing ----
 
+    fn scene_target(&mut self, rt: &ID2D1HwndRenderTarget) -> Option<ID2D1BitmapRenderTarget> {
+        let (w, h) = self.rt_size;
+        if let Some((sw, sh, t)) = &self.scene {
+            if (*sw, *sh) == (w, h) {
+                return Some(t.clone());
+            }
+        }
+        let t = unsafe { rt.CreateCompatibleRenderTarget(None, Some(&D2D_SIZE_U { width: w, height: h }), None, D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE).ok()? };
+        unsafe { t.SetDpi(96.0, 96.0) };
+        self.scene = Some((w, h, t.clone()));
+        Some(t)
+    }
+
     fn render(&mut self, gfx: &Gfx) {
         let Some(rt) = self.rt.clone() else { return };
         let rt1: &ID2D1RenderTarget = &rt;
         let s = self.scale;
+        let p = theme::pal();
         if self.fonts_ui.as_ref().map(|f| f.0) != Some(s) {
-            if let (Ok(small), Ok(label), Ok(icon)) = (gfx.ui_font(11.0 * s, false), gfx.ui_font(13.0 * s, false), gfx.icon_font(14.0 * s)) {
+            if let (Ok(small), Ok(label), Ok(icon)) = (gfx.ui_font(11.0 * s, false), gfx.ui_font(13.0 * s, true), gfx.icon_font(14.0 * s)) {
                 self.fonts_ui = Some((s, small, label, icon));
             }
         }
@@ -1151,64 +1220,122 @@ impl VEditor {
             }
         }
         let l = self.lay();
-        let (cw, _ch) = (self.rt_size.0 as f32, self.rt_size.1 as f32);
+        let scene = self.scene_target(&rt);
         unsafe {
-            rt.BeginDraw();
-            rt.Clear(Some(&rgba(BG, 1.0)));
+            let target: &ID2D1RenderTarget = match &scene {
+                Some(t) => t,
+                None => rt1,
+            };
+            target.BeginDraw();
+            target.Clear(Some(&theme::color(p.canvas)));
             if let Some((_, b)) = &self.frame_bmp {
-                if let Ok(sh) = d2d::brush(rt1, rgba(0x000000, 0.35)) {
-                    rt.FillRectangle(&rect_f(l.pic.left + 3.0, l.pic.top + 4.0, l.pic.right + 3.0, l.pic.bottom + 4.0), &sh);
+                theme::shadow(target, l.pic, 2.0 * s, s, 0.8);
+                target.DrawBitmap(b, Some(&l.pic), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+            }
+            self.draw_marks_ui(target, &l);
+            let mut blurred = None;
+            if let Some(t) = &scene {
+                let _ = t.EndDraw(None, None);
+                rt.BeginDraw();
+                if let Ok(b) = t.GetBitmap() {
+                    rt.DrawBitmap(&b, None, 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None);
+                    blurred = self.blur.image(rt1, &b, 22.0 * s);
                 }
-                rt.DrawBitmap(b, Some(&l.pic), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
             }
-            self.draw_marks_ui(rt1, &l);
-            // Toolbar.
-            if let Ok(bar_bg) = d2d::brush(rt1, rgba(PANEL, 1.0)) {
-                rt.FillRectangle(&rect_f(0.0, 0.0, cw, l.bar), &bar_bg);
-                rt.FillRectangle(&rect_f(0.0, l.transport.top, cw, self.rt_size.1 as f32), &bar_bg);
-            }
-            if let Ok(line) = d2d::brush(rt1, rgba(0xFFFFFF, 0.08)) {
-                rt.FillRectangle(&rect_f(0.0, l.bar - 1.0, cw, l.bar), &line);
-                rt.FillRectangle(&rect_f(0.0, l.transport.top, cw, l.transport.top + 1.0), &line);
-            }
+            let back = blurred.as_ref().map(|image| Backdrop { image, origin: (0.0, 0.0), zoom: 1.0 });
+            theme::glass(rt1, gfx, l.sheet, 18.0 * s, s, back.as_ref());
             let st = self.state();
-            self.strip.draw(rt1, gfx, &st, (0.0, 0.0), false);
+            self.strip.draw(rt1, gfx, &st, (0.0, 0.0), Some(back.as_ref()));
             self.draw_panel(rt1, gfx, &l);
             let _ = rt.EndDraw(None, None);
         }
     }
 
+    /// Fills `r` with rounded corners and runs `f` clipped to that shape.
+    unsafe fn clipped(&self, rt: &ID2D1RenderTarget, r: D2D_RECT_F, radius: f32, f: impl FnOnce()) {
+        let dc = rt.cast::<ID2D1DeviceContext>().ok();
+        let geo = unsafe { rt.GetFactory().ok().and_then(|fa| fa.CreateRoundedRectangleGeometry(&theme::round(r, radius)).ok()) };
+        match (&dc, geo) {
+            (Some(dc), Some(geo)) => unsafe {
+                let params = D2D1_LAYER_PARAMETERS1 {
+                    contentBounds: r,
+                    geometricMask: std::mem::ManuallyDrop::new(geo.cast::<ID2D1Geometry>().ok()),
+                    maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    maskTransform: windows_numerics::Matrix3x2::identity(),
+                    opacity: 1.0,
+                    opacityBrush: std::mem::ManuallyDrop::new(None),
+                    layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+                };
+                dc.PushLayer(&params, None);
+                let _ = std::mem::ManuallyDrop::into_inner(params.geometricMask);
+                f();
+                dc.PopLayer();
+            },
+            _ => unsafe {
+                rt.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED);
+                f();
+                rt.PopAxisAlignedClip();
+            },
+        }
+    }
+
     unsafe fn draw_panel(&mut self, rt: &ID2D1RenderTarget, gfx: &Gfx, l: &Lay) {
         let s = self.scale;
+        let p = theme::pal();
         let Some((_, small, label, icon)) = self.fonts_ui.clone() else { return };
-        let (Ok(fg), Ok(dim), Ok(acc), Ok(btn), Ok(clip_bg)) = (
-            d2d::brush(rt, rgba(0xFFFFFF, 0.9)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.45)),
-            d2d::brush(rt, rgba(ACCENT, 1.0)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.08)),
-            d2d::brush(rt, rgba(0x2A2B30, 1.0)),
+        let (Some(fg), Some(fg2), Some(dim), Some(acc), Some(btn), Some(btn_hover), Some(track), Some(on_acc)) = (
+            theme::brush(rt, p.label),
+            theme::brush(rt, p.label2),
+            theme::brush(rt, p.label3),
+            theme::brush(rt, p.accent),
+            theme::brush(rt, p.hover),
+            theme::brush(rt, p.selected),
+            theme::brush(rt, theme::with_alpha(p.hover, 1.4)),
+            theme::brush(rt, p.on_accent),
         ) else {
             return;
         };
         unsafe {
-            // Transport: play, time, split, delete, status.
-            rt.FillRoundedRectangle(&d2d::round_rect(l.play, 6.0 * s), &btn);
+            // Transport: round accent play button, time, Split and Delete capsules.
             let playing = self.player.playing();
-            d2d::draw_text(rt, &icon, if playing { "\u{E769}" } else { "\u{E768}" }, l.play, &fg);
-            let time = format!("{} / {}", vedit::clock(self.playhead), vedit::clock(self.timeline.total()));
-            d2d::draw_text(rt, &label, &time, rect_f(l.play.right + 12.0 * s, l.play.top + 5.0 * s, l.play.right + 220.0 * s, l.play.bottom), &fg);
-            for (r, glyph, text) in [(l.split, "\u{E8C6}", "Split  S"), (l.delete, "\u{E74D}", "Delete")] {
-                rt.FillRoundedRectangle(&d2d::round_rect(r, 6.0 * s), &btn);
+            let pr = if self.hover_ctl == Some(1) { l.play } else { theme::inset(l.play, 0.5 * s) };
+            let e = D2D1_ELLIPSE {
+                point: windows_numerics::Vector2 { X: (pr.left + pr.right) / 2.0, Y: (pr.top + pr.bottom) / 2.0 },
+                radiusX: (pr.right - pr.left) / 2.0,
+                radiusY: (pr.bottom - pr.top) / 2.0,
+            };
+            rt.FillEllipse(&e, &acc);
+            let glyph_r = if playing { l.play } else { rect_f(l.play.left + 1.5 * s, l.play.top, l.play.right + 1.5 * s, l.play.bottom) };
+            d2d::draw_text(rt, &icon, if playing { "\u{E769}" } else { "\u{E768}" }, glyph_r, &on_acc);
+            let now = vedit::clock(self.playhead);
+            let total = format!("  /  {}", vedit::clock(self.timeline.total()));
+            let tx = l.play.right + 14.0 * s;
+            let ty = l.play.top + 7.0 * s;
+            d2d::draw_text(rt, &label, &now, rect_f(tx, ty, tx + 120.0 * s, l.play.bottom), &fg);
+            let nw = gfx.measure(&label, &now);
+            d2d::draw_text(rt, &label, &total, rect_f(tx + nw, ty, tx + nw + 140.0 * s, l.play.bottom), &fg2);
+            for (r, glyph, text, key) in [(l.split, "\u{E8C6}", "Split", "S"), (l.delete, "\u{E74D}", "Delete", "")] {
+                let k = if r.left == l.split.left { 2 } else { 3 };
+                let rr = theme::round(r, (r.bottom - r.top) / 2.0);
+                rt.FillRoundedRectangle(&rr, if self.hover_ctl == Some(k) { &btn_hover } else { &btn });
                 let gw = 22.0 * s;
-                let w = gw + gfx.measure(&label, text);
+                let kw = if key.is_empty() { 0.0 } else { gfx.measure(&small, key) + 12.0 * s };
+                let w = gw + gfx.measure(&label, text) + kw;
                 let x = r.left + ((r.right - r.left) - w) / 2.0;
-                d2d::draw_text(rt, &icon, glyph, rect_f(x, r.top, x + gw - 4.0 * s, r.bottom), &fg);
-                d2d::draw_text(rt, &label, text, rect_f(x + gw, r.top + 5.0 * s, r.right, r.bottom), &fg);
+                d2d::draw_text(rt, &icon, glyph, rect_f(x, r.top, x + gw - 6.0 * s, r.bottom), &fg);
+                let lx = x + gw;
+                d2d::draw_text(rt, &label, text, rect_f(lx, r.top + 8.0 * s, r.right, r.bottom), &fg);
+                if !key.is_empty() {
+                    let kx = lx + gfx.measure(&label, text) + 7.0 * s;
+                    let kr = rect_f(kx, r.top + 9.0 * s, kx + gfx.measure(&small, key) + 8.0 * s, r.bottom - 9.0 * s);
+                    rt.DrawRoundedRectangle(&theme::round(kr, 4.0 * s), &dim, 1.0, None);
+                    d2d::draw_text(rt, &small, key, rect_f(kr.left + 4.0 * s, kr.top + 1.0 * s, kr.right, kr.bottom), &fg2);
+                }
             }
             if !self.status.is_empty() {
                 let w = gfx.measure(&label, &self.status);
-                let x = l.split.left - 16.0 * s - w;
-                d2d::draw_text(rt, &label, &self.status, rect_f(x, l.play.top + 5.0 * s, l.split.left - 8.0 * s, l.play.bottom), &acc);
+                let x = l.split.left - 18.0 * s - w;
+                d2d::draw_text(rt, &label, &self.status, rect_f(x, l.play.top + 7.0 * s, l.split.left - 8.0 * s, l.play.bottom), &acc);
             }
 
             // Ruler.
@@ -1219,11 +1346,11 @@ impl VEditor {
             while sec * 1000 <= total {
                 let x = self.x_of(l, sec * 1000);
                 rt.FillRectangle(&rect_f(x, l.ruler.bottom - 5.0 * s, x + 1.0, l.ruler.bottom), &dim);
-                d2d::draw_text(rt, &small, &format!("{}:{:02}", sec / 60, sec % 60), rect_f(x + 3.0 * s, l.ruler.top, x + 60.0 * s, l.ruler.bottom), &dim);
+                d2d::draw_text(rt, &small, &format!("{}:{:02}", sec / 60, sec % 60), rect_f(x + 3.0 * s, l.ruler.top, x + 60.0 * s, l.ruler.bottom), &fg2);
                 sec += step_s;
             }
 
-            // Clips: thumbnails, waveform, borders.
+            // Clips: thumbnails, waveform, rounded borders.
             let thumbs: Vec<(u32, Arc<crate::image::Frame>)> = self.strips.thumbs.lock().map(|g| g.clone()).unwrap_or_default();
             let peaks: Vec<u8> = self.strips.peaks.lock().map(|g| g.clone()).unwrap_or_default();
             let track_h = l.clips.bottom - l.clips.top;
@@ -1234,11 +1361,13 @@ impl VEditor {
                 Drag::Clip { idx, moved: true, target, .. } => Some((*idx, *target)),
                 _ => None,
             };
+            let radius = 8.0 * s;
+            let wave = theme::brush(rt, theme::with_alpha(p.teal, 0.9));
             for (i, c) in self.timeline.clips.clone().iter().enumerate() {
                 let (a, b) = (self.x_of(l, self.timeline.start_of(i)), self.x_of(l, self.timeline.start_of(i) + c.len()));
-                let r = rect_f(a + 1.0, l.clips.top, (b - 1.0).max(a + 2.0), l.clips.bottom);
-                rt.FillRoundedRectangle(&d2d::round_rect(r, 5.0 * s), &clip_bg);
-                rt.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED);
+                let r = rect_f(a + 1.5, l.clips.top, (b - 1.5).max(a + 3.0), l.clips.bottom);
+                rt.FillRoundedRectangle(&theme::round(r, radius), &track);
+                let mut bmps: Vec<(D2D_RECT_F, ID2D1Bitmap)> = Vec::new();
                 if !thumbs.is_empty() {
                     let mut x = r.left;
                     while x < r.right {
@@ -1265,34 +1394,45 @@ impl VEditor {
                             }
                         }
                         if let Some(bm) = self.thumb_bmps.get(ms) {
-                            rt.DrawBitmap(bm, Some(&rect_f(x, r.top, x + tw, r.top + th)), 0.9, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+                            bmps.push((rect_f(x, r.top, x + tw, r.top + th), bm.clone()));
                         }
                         x += tw;
                     }
                 }
+                let mut bars: Vec<D2D_RECT_F> = Vec::new();
                 if !peaks.is_empty() {
-                    if let Ok(wb) = d2d::brush(rt, rgba(0x5EEAD4, 0.8)) {
-                        let mid = r.bottom - wave_h / 2.0;
-                        let mut x = r.left;
-                        while x < r.right {
-                            let k0 = ((x - a) / (b - a).max(1.0)).clamp(0.0, 1.0);
-                            let k1 = ((x + 2.0 - a) / (b - a).max(1.0)).clamp(0.0, 1.0);
-                            let (m0, m1) = (c.a + (k0 * c.len() as f32) as u32, c.a + (k1 * c.len() as f32) as u32);
-                            let (p0, p1) = ((m0 / PEAK_MS) as usize, ((m1 / PEAK_MS) as usize).max(m0 as usize / PEAK_MS as usize + 1));
-                            let v = peaks.get(p0..p1.min(peaks.len())).and_then(|sl| sl.iter().max().copied()).unwrap_or(0);
-                            let hh = (v as f32 / 255.0) * (wave_h / 2.0 - 1.0);
-                            rt.FillRectangle(&rect_f(x, mid - hh, x + 1.2, mid + hh.max(0.5)), &wb);
-                            x += 2.0;
-                        }
+                    let mid = r.bottom - wave_h / 2.0;
+                    let mut x = r.left + 2.0 * s;
+                    while x < r.right - 2.0 * s {
+                        let k0 = ((x - a) / (b - a).max(1.0)).clamp(0.0, 1.0);
+                        let k1 = ((x + 2.0 - a) / (b - a).max(1.0)).clamp(0.0, 1.0);
+                        let (m0, m1) = (c.a + (k0 * c.len() as f32) as u32, c.a + (k1 * c.len() as f32) as u32);
+                        let (p0, p1) = ((m0 / PEAK_MS) as usize, ((m1 / PEAK_MS) as usize).max(m0 as usize / PEAK_MS as usize + 1));
+                        let v = peaks.get(p0..p1.min(peaks.len())).and_then(|sl| sl.iter().max().copied()).unwrap_or(0);
+                        let hh = (v as f32 / 255.0) * (wave_h / 2.0 - 2.0);
+                        bars.push(rect_f(x, mid - hh.max(0.5), x + 1.4 * s, mid + hh.max(0.5)));
+                        x += 2.5 * s;
                     }
                 }
-                rt.PopAxisAlignedClip();
+                self.clipped(rt, r, radius, || {
+                    for (d, bm) in &bmps {
+                        rt.DrawBitmap(bm, Some(d), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+                    }
+                    if let Some(wb) = &wave {
+                        for q in &bars {
+                            rt.FillRoundedRectangle(&theme::round(*q, 0.7 * s), wb);
+                        }
+                    }
+                });
                 let sel = self.sel_clip == Some(i);
-                let border = if sel { &acc } else { &btn };
-                rt.DrawRoundedRectangle(&d2d::round_rect(r, 5.0 * s), border, if sel { 2.0 * s } else { 1.0 }, None);
+                if sel {
+                    rt.DrawRoundedRectangle(&theme::round(theme::inset(r, 1.0 * s), radius - 1.0 * s), &acc, 2.0 * s, None);
+                } else if let Some(h) = theme::brush(rt, p.hairline) {
+                    rt.DrawRoundedRectangle(&theme::round(theme::inset(r, 0.5), radius), &h, 1.0, None);
+                }
                 if moving.is_some_and(|(m, _)| m == i) {
-                    if let Ok(veil) = d2d::brush(rt, rgba(0x000000, 0.5)) {
-                        rt.FillRoundedRectangle(&d2d::round_rect(r, 5.0 * s), &veil);
+                    if let Ok(veil) = d2d::brush(rt, rgba(0x000000, 0.45)) {
+                        rt.FillRoundedRectangle(&theme::round(r, radius), &veil);
                     }
                 }
             }
@@ -1305,14 +1445,14 @@ impl VEditor {
                     let k = others[(target - 1).min(others.len() - 1)];
                     self.x_of(l, self.timeline.start_of(k) + self.timeline.clips[k].len())
                 };
-                rt.FillRectangle(&rect_f(x - 1.5 * s, l.clips.top - 4.0 * s, x + 1.5 * s, l.clips.bottom + 4.0 * s), &acc);
+                rt.FillRoundedRectangle(&theme::round(rect_f(x - 1.5 * s, l.clips.top - 4.0 * s, x + 1.5 * s, l.clips.bottom + 4.0 * s), 1.5 * s), &acc);
             }
 
-            // Annotation track.
-            rt.FillRoundedRectangle(&d2d::round_rect(l.items, 5.0 * s), &btn);
+            // Annotation track: capsules.
+            rt.FillRoundedRectangle(&theme::round(l.items, radius), &btn);
             let lanes = self.lanes();
             if lanes.is_empty() {
-                d2d::draw_text(rt, &small, "Annotations and zooms show up here. Draw on the video to add one.", rect_f(l.items.left + 10.0 * s, l.items.top + 12.0 * s, l.items.right, l.items.bottom), &dim);
+                d2d::draw_text(rt, &small, "Text, marks and zooms show up here. Draw on the video to add one.", rect_f(l.items.left + 12.0 * s, l.items.top + 13.0 * s, l.items.right, l.items.bottom), &fg2);
             }
             let n = lanes.iter().map(|(_, ln)| ln + 1).max().unwrap_or(1).max(1);
             let lh = (l.items.bottom - l.items.top) / n as f32;
@@ -1320,44 +1460,51 @@ impl VEditor {
                 let it = &self.canvas.items[i];
                 let Some((a, b)) = it.span else { continue };
                 let (x0, x1) = (self.x_of(l, a), self.x_of(l, b.min(total)).max(self.x_of(l, a) + 4.0));
-                let r = rect_f(x0, l.items.top + lh * lane as f32 + 2.0, x1, l.items.top + lh * (lane + 1) as f32 - 2.0);
+                let r = rect_f(x0, l.items.top + lh * lane as f32 + 3.0 * s, x1, l.items.top + lh * (lane + 1) as f32 - 3.0 * s);
                 let (col, name) = match &it.shape {
-                    Shape::Zoom { .. } => (ZOOM_COLOR, "Zoom".to_string()),
+                    Shape::Zoom { .. } => (p.purple.0, "Zoom".to_string()),
                     Shape::Text { text, .. } => (it.color.hex(), format!("T  {}", text.lines().next().unwrap_or(""))),
                     Shape::Step { .. } => (it.color.hex(), "Step".into()),
                     Shape::Arrow { .. } => (it.color.hex(), "Arrow".into()),
-                    Shape::Blur { .. } => (0x9CA3AF, "Blur".into()),
+                    Shape::Blur { .. } => (0x8E8E93, "Blur".into()),
                     Shape::Rect { .. } => (it.color.hex(), "Rectangle".into()),
                     Shape::Ellipse { .. } => (it.color.hex(), "Ellipse".into()),
                     Shape::Line { .. } => (it.color.hex(), "Line".into()),
                     Shape::Pen { .. } => (it.color.hex(), "Pen".into()),
                     Shape::Highlighter { .. } => (it.color.hex(), "Marker".into()),
                 };
-                if let Ok(bb) = d2d::brush(rt, rgba(col, 0.85)) {
-                    rt.FillRoundedRectangle(&d2d::round_rect(r, 4.0 * s), &bb);
+                let cr = (r.bottom - r.top) / 2.0;
+                if let Ok(bb) = d2d::brush(rt, rgba(col, 0.92)) {
+                    rt.FillRoundedRectangle(&theme::round(r, cr), &bb);
                 }
                 if self.canvas.selected == Some(i) {
-                    if let Ok(wb) = d2d::brush(rt, rgba(0xFFFFFF, 1.0)) {
-                        rt.DrawRoundedRectangle(&d2d::round_rect(r, 4.0 * s), &wb, 2.0 * s, None);
-                    }
+                    rt.DrawRoundedRectangle(&theme::round(theme::inset(r, -1.5 * s), cr + 1.5 * s), &fg, 2.0 * s, None);
                 }
                 let ink = if Color::from_hex(col).luma() > 0.6 { 0x111111 } else { 0xFFFFFF };
                 if let Ok(tb) = d2d::brush(rt, rgba(ink, 0.95)) {
-                    d2d::draw_text(rt, &small, &name, rect_f(r.left + 6.0 * s, r.top + ((r.bottom - r.top) - 14.0 * s) / 2.0, r.right - 2.0, r.bottom), &tb);
+                    d2d::draw_text(rt, &small, &name, rect_f(r.left + 9.0 * s, r.top + ((r.bottom - r.top) - 14.0 * s) / 2.0, r.right - 4.0, r.bottom), &tb);
                 }
             }
 
-            // Playhead.
+            // Playhead with a round knob.
             let x = self.x_of(l, self.playhead);
-            rt.FillRectangle(&rect_f(x - 1.0, l.ruler.top, x + 1.0, l.items.bottom), &acc);
-            rt.FillRoundedRectangle(&d2d::round_rect(rect_f(x - 5.0 * s, l.ruler.top, x + 5.0 * s, l.ruler.top + 10.0 * s), 2.0 * s), &acc);
+            rt.FillRoundedRectangle(&theme::round(rect_f(x - 1.0 * s, l.ruler.top + 6.0 * s, x + 1.0 * s, l.items.bottom), 1.0 * s), &acc);
+            let knob = D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: x, Y: l.ruler.top + 6.0 * s }, radiusX: 6.0 * s, radiusY: 6.0 * s };
+            if let Ok(sh) = d2d::brush(rt, rgba(0x000000, 0.25)) {
+                rt.FillEllipse(&D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: x, Y: l.ruler.top + 7.0 * s }, radiusX: 7.0 * s, radiusY: 7.0 * s }, &sh);
+            }
+            rt.FillEllipse(&knob, &acc);
+            if let Ok(w) = d2d::brush(rt, rgba(0xFFFFFF, 1.0)) {
+                rt.FillEllipse(&D2D1_ELLIPSE { radiusX: 2.0 * s, radiusY: 2.0 * s, ..knob }, &w);
+            }
         }
     }
 
     /// Selection handles, text box and caret, zoom areas.
     unsafe fn draw_marks_ui(&self, rt: &ID2D1RenderTarget, l: &Lay) {
         let s = self.scale;
-        let (Ok(acc), Ok(white), Ok(zb)) = (d2d::brush(rt, rgba(ACCENT, 1.0)), d2d::brush(rt, rgba(0xFFFFFF, 1.0)), d2d::brush(rt, rgba(ZOOM_COLOR, 1.0))) else { return };
+        let p = theme::pal();
+        let (Some(acc), Ok(white), Some(zb)) = (theme::brush(rt, p.accent), d2d::brush(rt, rgba(0xFFFFFF, 1.0)), theme::brush(rt, p.purple)) else { return };
         let c = &self.canvas;
         unsafe {
             if self.show_full() {
@@ -1368,7 +1515,7 @@ impl VEditor {
                         let (x0, y0) = self.to_screen(l, P::new(z.x, z.y));
                         let (x1, y1) = self.to_screen(l, P::new(z.x + z.w, z.y + z.h));
                         let w = if c.selected == Some(i) { 2.5 * s } else { 1.5 * s };
-                        rt.DrawRectangle(&rect_f(x0, y0, x1, y1), &zb, w, None);
+                        rt.DrawRoundedRectangle(&theme::round(rect_f(x0, y0, x1, y1), 6.0 * s), &zb, w, None);
                     }
                 }
                 if let Some(d) = &c.draft {
@@ -1376,7 +1523,7 @@ impl VEditor {
                         let z = vedit::zoom_rect(*a, *b, fw, fh);
                         let (x0, y0) = self.to_screen(l, P::new(z.x, z.y));
                         let (x1, y1) = self.to_screen(l, P::new(z.x + z.w, z.y + z.h));
-                        rt.DrawRectangle(&rect_f(x0, y0, x1, y1), &zb, 2.0 * s, None);
+                        rt.DrawRoundedRectangle(&theme::round(rect_f(x0, y0, x1, y1), 6.0 * s), &zb, 2.0 * s, None);
                     }
                 }
             }
@@ -1390,10 +1537,7 @@ impl VEditor {
                     }
                     for (_, hp) in c.handles() {
                         let (x, y) = self.to_screen(l, hp);
-                        let hs = 4.5 * s;
-                        let r = rect_f(x - hs, y - hs, x + hs, y + hs);
-                        rt.FillRectangle(&r, &white);
-                        rt.DrawRectangle(&r, &acc, 1.0, None);
+                        super::editor::handle_dot(rt, x, y, s, &white, &acc);
                     }
                 }
             }
@@ -1402,7 +1546,7 @@ impl VEditor {
                     let (l0, tp, r0, b0) = font::text_box(&f.text, t.size, &t.text, t.at.x, t.at.y);
                     let (x0, y0) = self.to_screen(l, P::new(l0, tp));
                     let (x1, y1) = self.to_screen(l, P::new(r0, b0));
-                    rt.DrawRectangle(&rect_f(x0 - 4.0, y0 - 3.0, x1 + 4.0, y1 + 3.0), &acc, 1.0, None);
+                    rt.DrawRoundedRectangle(&theme::round(rect_f(x0 - 5.0, y0 - 4.0, x1 + 5.0, y1 + 4.0), 4.0 * s), &acc, 1.0, None);
                     if self.caret_on {
                         let last = t.text.split('\n').last().unwrap_or("");
                         let lines = t.text.split('\n').count().max(1) as f32;
@@ -1411,7 +1555,7 @@ impl VEditor {
                         let cy = t.at.y + lh * (lines - 1.0);
                         let (sx, sy) = self.to_screen(l, P::new(cx, cy));
                         let (_, ey) = self.to_screen(l, P::new(cx, cy + lh));
-                        rt.FillRectangle(&rect_f(sx + 1.0, sy + 2.0, sx + 1.0 + 1.5 * s, ey - 2.0), &acc);
+                        rt.FillRoundedRectangle(&theme::round(rect_f(sx + 1.0, sy + 2.0, sx + 1.0 + 2.0 * s, ey - 2.0), 1.0 * s), &acc);
                     }
                 }
             }

@@ -11,8 +11,7 @@
 use super::{WM_APP_CAPTURE, WM_APP_KEY};
 use crate::config::Hotkey;
 use std::cell::Cell;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -24,7 +23,22 @@ static OVERLAY: AtomicIsize = AtomicIsize::new(0);
 static THREAD: AtomicU32 = AtomicU32::new(0);
 /// While typing text on the overlay every key goes to it untouched.
 static PASS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static HOTKEY: OnceLock<Hotkey> = OnceLock::new();
+/// The hotkey, packed (key | ctrl<<32 | alt<<33 | shift<<34 | win<<35) so the
+/// hook thread reads it without a lock and Home can change it live.
+static HOTKEY: AtomicU64 = AtomicU64::new(0);
+
+fn pack(h: &Hotkey) -> u64 {
+    h.key as u64 | (h.ctrl as u64) << 32 | (h.alt as u64) << 33 | (h.shift as u64) << 34 | (h.win as u64) << 35
+}
+
+fn unpack(v: u64) -> Option<Hotkey> {
+    (v & 0xFFFF_FFFF != 0).then(|| Hotkey { key: v as u32, ctrl: v >> 32 & 1 == 1, alt: v >> 33 & 1 == 1, shift: v >> 34 & 1 == 1, win: v >> 35 & 1 == 1 })
+}
+
+/// Changes the capture hotkey while running.
+pub fn set_hotkey(h: &Hotkey) {
+    HOTKEY.store(pack(h), Ordering::Release);
+}
 
 /// A held key repeats every few tens of ms; silence this long means the
 /// key-up was lost and the next down is a fresh press.
@@ -66,7 +80,8 @@ unsafe extern "system" fn proc_(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         let vk = info.vkCode;
         let overlay = OVERLAY.load(Ordering::Acquire);
         let mut swallow = false;
-        if let Some(h) = HOTKEY.get() {
+        if let Some(h) = unpack(HOTKEY.load(Ordering::Acquire)) {
+            let h = &h;
             if vk == h.key {
                 let held = DOWN_SINCE.with(|d| d.get());
                 let fresh = held.is_none_or(|t| t.elapsed().as_millis() > STALE_MS);
@@ -100,7 +115,7 @@ unsafe extern "system" fn proc_(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
 /// Starts the hook thread. Returns false if the hook could not be set.
 pub fn install(target: HWND, hotkey: Hotkey) -> bool {
     TARGET.store(target.0 as isize, Ordering::Release);
-    let _ = HOTKEY.set(hotkey);
+    set_hotkey(&hotkey);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || unsafe {
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(proc_), None, 0);

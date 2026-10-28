@@ -3,8 +3,8 @@
 //! video even when they sit inside the recorded area.
 
 use super::class_name;
-use super::d2d::{self, Gfx, rect_f, rgba};
-use super::overlay::ACCENT;
+use super::d2d::{self, Gfx, rect_f};
+use super::theme::{self, Material};
 use super::util::{lparam_point, to_win_rect};
 use crate::geom::{Point, Rect};
 use windows::Win32::Foundation::*;
@@ -16,8 +16,6 @@ use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const TICK: usize = 1;
-const BG: u32 = 0x1E1E20;
-const RED: u32 = 0xE5484D;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BarButton {
@@ -42,6 +40,7 @@ pub struct RecBar {
     pub muted: bool,
     pub seconds: f64,
     visible: bool,
+    acrylic: bool,
 }
 
 fn exclude_from_capture(h: HWND) {
@@ -89,6 +88,8 @@ impl RecBar {
             let _ = DwmSetWindowAttribute(bar, DWMWA_WINDOW_CORNER_PREFERENCE, &round as *const _ as *const _, 4);
             (bar, outline)
         };
+        theme::apply_window(hwnd);
+        let acrylic = theme::material(hwnd, Material::Acrylic);
         exclude_from_capture(hwnd);
         exclude_from_capture(outline);
         Ok(RecBar {
@@ -106,6 +107,7 @@ impl RecBar {
             muted: false,
             seconds: 0.0,
             visible: false,
+            acrylic,
         })
     }
 
@@ -126,12 +128,12 @@ impl RecBar {
         self.hover = None;
         self.press = None;
         let px = |v: f32| (v * scale).round() as i32;
-        let btn = px(34.0);
-        let pad = px(6.0);
-        let timer_w = px(92.0);
+        let btn = px(36.0);
+        let pad = px(7.0);
+        let timer_w = px(96.0);
         let n = if show_mic { 4 } else { 3 };
-        let w = pad + timer_w + n * btn + pad;
-        let h = px(46.0);
+        let w = pad + timer_w + n * btn + (n - 1) * px(2.0) + pad + px(4.0);
+        let h = px(50.0);
         self.buttons.clear();
         let mut x = pad + timer_w;
         let mut order = vec![BarButton::Pause, BarButton::Stop];
@@ -141,7 +143,7 @@ impl RecBar {
         order.push(BarButton::Discard);
         for b in order {
             self.buttons.push((b, Rect::new(x, pad, x + btn, h - pad)));
-            x += btn;
+            x += btn + px(2.0);
         }
         // Below the region, else above, else inside the bottom edge.
         let gap = px(10.0);
@@ -158,7 +160,7 @@ impl RecBar {
             self.rt_size = (w as u32, h as u32);
         }
         if self.fonts.as_ref().map(|f| f.0) != Some(scale) {
-            if let (Ok(a), Ok(b)) = (gfx.ui_font(15.0 * scale, true), gfx.icon_font(15.0 * scale)) {
+            if let (Ok(a), Ok(b)) = (gfx.ui_font(15.0 * scale, true), gfx.icon_font(14.0 * scale)) {
                 self.fonts = Some((scale, a, b));
             }
         }
@@ -178,6 +180,18 @@ impl RecBar {
         let _ = to_win_rect;
         self.visible = true;
         self.render();
+        super::uimap::clear("bar");
+        for (b, r) in &self.buttons {
+            super::uimap::put(&format!("bar.{b:?}"), r.offset(bx, by));
+        }
+    }
+
+    pub fn theme_changed(&mut self) {
+        theme::apply_window(self.hwnd);
+        self.invalidate();
+        unsafe {
+            let _ = InvalidateRect(Some(self.outline), None, true);
+        }
     }
 
     pub fn hide(&mut self) {
@@ -212,7 +226,8 @@ impl RecBar {
             unsafe {
                 let mut ps = PAINTSTRUCT::default();
                 let dc = BeginPaint(hwnd, &mut ps);
-                let b = CreateSolidBrush(COLORREF(((ACCENT & 0xFF) << 16) | (ACCENT & 0xFF00) | ((ACCENT >> 16) & 0xFF)));
+                let a = theme::pal().accent.0;
+                let b = CreateSolidBrush(COLORREF(((a & 0xFF) << 16) | (a & 0xFF00) | ((a >> 16) & 0xFF)));
                 let mut r = RECT::default();
                 let _ = GetClientRect(hwnd, &mut r);
                 FillRect(dc, &r, b);
@@ -278,37 +293,69 @@ impl RecBar {
     fn render(&mut self) {
         let (Some(rt), Some((_, ui, icon))) = (self.rt.clone(), self.fonts.clone()) else { return };
         let s = self.scale;
+        let p = theme::pal();
         let rt1: &ID2D1RenderTarget = &rt;
-        let (Ok(fg), Ok(hover), Ok(press), Ok(red), Ok(dim)) = (
-            d2d::brush(rt1, rgba(0xFFFFFF, 0.95)),
-            d2d::brush(rt1, rgba(0xFFFFFF, 0.09)),
-            d2d::brush(rt1, rgba(0xFFFFFF, 0.16)),
-            d2d::brush(rt1, rgba(RED, 1.0)),
-            d2d::brush(rt1, rgba(0xFFFFFF, 0.55)),
+        let (Some(fg), Some(hover), Some(press), Some(red), Some(dim), Some(sep)) = (
+            theme::brush(rt1, p.label),
+            theme::brush(rt1, p.hover),
+            theme::brush(rt1, p.selected),
+            theme::brush(rt1, p.red),
+            theme::brush(rt1, p.label2),
+            theme::brush(rt1, p.separator),
         ) else {
             return;
         };
-        let h = self.rt_size.1 as f32;
+        let (w, h) = (self.rt_size.0 as f32, self.rt_size.1 as f32);
         unsafe {
             rt.BeginDraw();
-            rt.Clear(Some(&rgba(BG, 0.97)));
-            // Red dot (hollow while paused) and timer.
-            let cx = 18.0 * s;
+            if self.acrylic {
+                rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+                rt.Clear(Some(&d2d::rgba(0, 0.0)));
+                if let Some(t) = theme::brush(rt1, p.glass) {
+                    rt.FillRectangle(&rect_f(0.0, 0.0, w, h), &t);
+                }
+            } else {
+                rt.Clear(Some(&theme::color(p.glass_solid.solid())));
+            }
+            theme::rim(rt1, rect_f(0.0, 0.0, w, h), 8.0 * s, s);
+            // Red dot (a ring while paused) and the timer in fixed-width digits.
+            let cx = 21.0 * s;
             let e = D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: cx, Y: h / 2.0 }, radiusX: 5.5 * s, radiusY: 5.5 * s };
             if self.paused {
-                rt.DrawEllipse(&e, &red, 1.5 * s, None);
+                rt.DrawEllipse(&e, &red, 1.6 * s, None);
             } else {
+                if let Some(glow) = theme::brush(rt1, theme::with_alpha(p.red, 0.25)) {
+                    let g = D2D1_ELLIPSE { radiusX: 9.0 * s, radiusY: 9.0 * s, ..e };
+                    rt.FillEllipse(&g, &glow);
+                }
                 rt.FillEllipse(&e, &red);
             }
             let secs = self.seconds.max(0.0) as u64;
             let text = format!("{}:{:02}", secs / 60, secs % 60);
-            d2d::draw_text(rt1, &ui, &text, rect_f(32.0 * s, h / 2.0 - 11.0 * s, 100.0 * s, h / 2.0 + 12.0 * s), if self.paused { &dim } else { &fg });
+            let cell = 9.6 * s;
+            let mut x = 36.0 * s;
+            for ch in text.chars() {
+                let cw = if ch == ':' { cell * 0.55 } else { cell };
+                ui.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER).ok();
+                d2d::draw_text(rt1, &ui, &ch.to_string(), rect_f(x, h / 2.0 - 11.0 * s, x + cw, h / 2.0 + 12.0 * s), if self.paused { &dim } else { &fg });
+                x += cw;
+            }
+            ui.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING).ok();
+            if let Some((_, r)) = self.buttons.first() {
+                let sx = r.left as f32 - 6.0 * s;
+                rt.FillRectangle(&rect_f(sx, h * 0.28, sx + 1.0, h * 0.72), &sep);
+            }
             for (b, r) in &self.buttons {
                 let lr = rect_f(r.left as f32, r.top as f32, r.right as f32, r.bottom as f32);
+                let e = D2D1_ELLIPSE {
+                    point: windows_numerics::Vector2 { X: (lr.left + lr.right) / 2.0, Y: (lr.top + lr.bottom) / 2.0 },
+                    radiusX: (lr.right - lr.left) / 2.0 - if self.press == Some(*b) { 1.0 * s } else { 0.0 },
+                    radiusY: (lr.bottom - lr.top) / 2.0 - if self.press == Some(*b) { 1.0 * s } else { 0.0 },
+                };
                 if self.press == Some(*b) {
-                    rt.FillRoundedRectangle(&d2d::round_rect(lr, 6.0 * s), &press);
+                    rt.FillEllipse(&e, &press);
                 } else if self.hover == Some(*b) {
-                    rt.FillRoundedRectangle(&d2d::round_rect(lr, 6.0 * s), &hover);
+                    rt.FillEllipse(&e, &hover);
                 }
                 let (glyph, brush) = match b {
                     BarButton::Pause => (if self.paused { "\u{E768}" } else { "\u{E769}" }, &fg),

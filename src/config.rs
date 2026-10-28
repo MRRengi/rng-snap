@@ -25,6 +25,41 @@ impl Default for Hotkey {
     }
 }
 
+impl Hotkey {
+    /// "Ctrl+Shift+S", "Scroll Lock", "Print Screen", "F8".
+    pub fn label(&self) -> String {
+        let key = match self.key {
+            0x91 => "Scroll Lock".to_string(),
+            0x2C => "Print Screen".to_string(),
+            0x13 => "Pause".to_string(),
+            0x70..=0x87 => format!("F{}", self.key - 0x6F),
+            0x30..=0x39 | 0x41..=0x5A => char::from_u32(self.key).map(|c| c.to_string()).unwrap_or_default(),
+            k => format!("Key {k}"),
+        };
+        let mut parts: Vec<&str> = Vec::new();
+        if self.ctrl {
+            parts.push("Ctrl");
+        }
+        if self.alt {
+            parts.push("Alt");
+        }
+        if self.shift {
+            parts.push("Shift");
+        }
+        if self.win {
+            parts.push("Win");
+        }
+        parts.push(&key);
+        parts.join("+")
+    }
+
+    /// The shortcuts Home offers.
+    pub fn presets() -> Vec<Hotkey> {
+        let k = |key: u32, ctrl: bool, alt: bool, shift: bool| Hotkey { key, ctrl, alt, shift, win: false };
+        vec![k(VK_SCROLL, false, false, false), k(0x2C, false, false, false), k(b'S' as u32, true, false, true), k(b'X' as u32, true, false, true), k(b'S' as u32, true, true, false)]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -241,5 +276,14 @@ mod tests {
         assert_eq!(capture_file_name(stamp, |_| false), "Snap 2026-10-27 01-42-05.png");
         let taken = ["Snap 2026-10-27 01-42-05.png", "Snap 2026-10-27 01-42-05 (2).png"];
         assert_eq!(capture_file_name(stamp, |n| taken.contains(&n)), "Snap 2026-10-27 01-42-05 (3).png");
+    }
+
+    #[test]
+    fn hotkey_labels() {
+        assert_eq!(Hotkey::default().label(), "Scroll Lock");
+        let p = Hotkey::presets();
+        let labels: Vec<String> = p.iter().map(|h| h.label()).collect();
+        assert_eq!(labels, ["Scroll Lock", "Print Screen", "Ctrl+Shift+S", "Ctrl+Shift+X", "Ctrl+Alt+S"]);
+        assert_eq!(Hotkey { key: 0x77, ctrl: false, alt: false, shift: false, win: true }.label(), "Win+F8");
     }
 }

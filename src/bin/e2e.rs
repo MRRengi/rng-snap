@@ -303,6 +303,11 @@ mod e2e {
     }
 
     fn screenshot(dir: &Path, name: &str) {
+        let f = grab_screen();
+        let _ = std::fs::write(dir.join(format!("{name}.png")), f.encode_png());
+    }
+
+    fn grab_screen() -> Frame {
         let r = unsafe {
             Rect::from_xywh(
                 GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -335,8 +340,7 @@ mod e2e {
             let _ = DeleteObject(bmp.into());
             let _ = DeleteDC(mem);
             ReleaseDC(None, screen);
-            let f = Frame { rect: Rect::from_xywh(0, 0, r.width(), r.height()), pixels };
-            let _ = std::fs::write(dir.join(format!("{name}.png")), f.encode_png());
+            Frame { rect: Rect::from_xywh(0, 0, r.width(), r.height()), pixels }
         }
     }
 
@@ -412,11 +416,85 @@ mod e2e {
     }
 
     fn launch(exe: &Path, home: &Path) -> std::io::Result<Child> {
+        launch_with(exe, home, &["--background"])
+    }
+
+    fn launch_with(exe: &Path, home: &Path, args: &[&str]) -> std::io::Result<Child> {
         Command::new(exe)
             .env("RENGI_SNAP_HOME", home)
             .env("RENGI_SNAP_NO_AUTOSTART", "1")
             .env("RENGI_SNAP_DEBUG", "1")
+            .args(args)
             .spawn()
+    }
+
+    static UI_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+    /// Where the app says a control is (`ui.txt`, written by the app under test).
+    fn ui(name: &str) -> Option<Rect> {
+        let text = std::fs::read_to_string(UI_FILE.get()?).ok()?;
+        text.lines().find_map(|l| {
+            let mut it = l.split_whitespace();
+            if it.next()? != name {
+                return None;
+            }
+            let v: Vec<i32> = it.filter_map(|x| x.parse().ok()).collect();
+            (v.len() == 4).then(|| Rect::new(v[0], v[1], v[2], v[3]))
+        })
+    }
+
+    /// Waits for a control to be published and returns its centre.
+    fn ui_at(name: &str) -> Option<(i32, i32)> {
+        let mut r = None;
+        wait(3000, || {
+            r = ui(name);
+            r.is_some()
+        });
+        r.map(|r| (r.left + r.width() / 2, r.top + r.height() / 2))
+    }
+
+    fn click_ui(name: &str) -> bool {
+        match ui_at(name) {
+            Some((x, y)) => {
+                click_at(x, y);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Switches Windows between light and dark apps, the way Settings does.
+    fn set_light_theme(light: bool) {
+        use windows::Win32::System::Registry::*;
+        unsafe {
+            let mut key = HKEY::default();
+            let path = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+            if RegCreateKeyExW(HKEY_CURRENT_USER, path, None, None, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, None, &mut key, None).is_ok() {
+                let v: u32 = light as u32;
+                let _ = RegSetValueExW(key, w!("AppsUseLightTheme"), None, REG_DWORD, Some(&v.to_le_bytes()));
+                let _ = RegCloseKey(key);
+            }
+            let what: Vec<u16> = "ImmersiveColorSet\0".encode_utf16().collect();
+            let _ = SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, WPARAM(0), LPARAM(what.as_ptr() as isize), SMTO_ABORTIFHUNG, 2000, None);
+        }
+    }
+
+    fn light_theme_now() -> bool {
+        use windows::Win32::System::Registry::*;
+        let mut data = 1u32;
+        let mut size = 4u32;
+        unsafe {
+            let _ = RegGetValueW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+                w!("AppsUseLightTheme"),
+                RRF_RT_REG_DWORD,
+                None,
+                Some(&mut data as *mut u32 as *mut _),
+                Some(&mut size),
+            );
+        }
+        data != 0
     }
 
     fn wheel(up: bool) {
@@ -878,6 +956,8 @@ mod e2e {
         let _ = std::fs::create_dir_all(&dir);
         let home = dir.join("home");
         let _ = std::fs::create_dir_all(&home);
+        let _ = UI_FILE.set(home.join("ui.txt"));
+        let started_light = light_theme_now();
         let mut rep = Report { file: std::fs::File::create(dir.join("e2e.txt")).unwrap(), failures: 0, dir: dir.clone() };
         let desk = unsafe { (GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN)) };
         rep.line(&format!("desktop {}x{}", desk.0, desk.1));
@@ -1044,8 +1124,8 @@ mod e2e {
         }
         close_overlay_if_open();
 
-        // F: a second launch triggers a capture in the running instance and exits.
-        match launch(&exe, &home) {
+        // F: a second launch with --capture triggers a capture in the running instance and exits.
+        match launch_with(&exe, &home, &["--capture"]) {
             Ok(mut second) => {
                 let exited = wait(5000, || matches!(second.try_wait(), Ok(Some(_))));
                 rep.check("F second instance exits", exited, "");
@@ -1068,11 +1148,9 @@ mod e2e {
             mouse(MOUSEEVENTF_LEFTUP);
             wait(5000, || seq() != s0);
             if wait(2000, || visible(w!("RengiSnapCard"))) {
-                let mut r = RECT::default();
-                unsafe {
-                    let _ = GetWindowRect(find(w!("RengiSnapCard")).unwrap(), &mut r);
-                }
-                move_to(r.left + 106, r.bottom - 29);
+                let (sx, sy) = ui_at("card.Save").unwrap_or((0, 0));
+                sleep(300);
+                move_to(sx, sy);
                 sleep(150);
                 mouse(MOUSEEVENTF_LEFTDOWN);
                 sleep(40);
@@ -1093,10 +1171,14 @@ mod e2e {
 
         // H: panel visuals (video hint, folder dropdown) for review.
         if open_overlay().is_some() {
-            move_to(470, 36);
+            if let Some((x, y)) = ui_at("panel.Video") {
+                move_to(x, y);
+            }
             sleep(200);
             screenshot(&rep.dir, "h1-video-hint");
-            move_to(585, 36);
+            if let Some((x, y)) = ui_at("panel.Folder") {
+                move_to(x, y);
+            }
             sleep(100);
             mouse(MOUSEEVENTF_LEFTDOWN);
             sleep(40);
@@ -1152,18 +1234,17 @@ mod e2e {
             }
         }
         if wait(2000, || visible(w!("RengiSnapCard"))) {
-            let card = window_rect(find(w!("RengiSnapCard")).unwrap().0 as isize);
-            click_at(card.left + 10 + 64 * 4 + 32, card.bottom - 29);
+            sleep(300);
+            click_ui("card.Edit");
             let opened = wait(4000, || visible(w!("RengiSnapEditor")));
             rep.check("E Edit opens the editor", opened, "");
             if opened {
                 sleep(700);
                 let ed = find(w!("RengiSnapEditor")).unwrap();
                 let cl = client_screen(ed);
-                let bar = 52;
                 let (iw, ih) = (pc.width(), pc.height());
-                let ox = cl.left + (cl.width() - iw) / 2;
-                let oy = cl.top + bar + (cl.height() - bar - ih) / 2;
+                let img_r = ui("editor.image").unwrap_or(Rect::from_xywh(cl.left + (cl.width() - iw) / 2, cl.top + (cl.height() - ih) / 2, iw, ih));
+                let (ox, oy) = (img_r.left, img_r.top);
                 rep.line(&format!("editor client {cl:?}, image at ({ox},{oy})"));
                 let step = |rep: &mut Report, name: &str, act: &dyn Fn()| -> Option<Frame> {
                     let s0 = seq();
@@ -1237,7 +1318,7 @@ mod e2e {
         // V: video.
         // V1: switch the panel to Video by clicking it, then drag over the animated window at 60 fps.
         if open_overlay().is_some() {
-            click_at(470, 36);
+            click_ui("panel.Video");
             sleep(250);
             screenshot(&rep.dir, "v0-panel-video");
             tap(VK_ESCAPE);
@@ -1272,15 +1353,16 @@ mod e2e {
             unsafe {
                 let _ = GetWindowRect(card, &mut r);
             }
+            let _ = r;
             let s0 = seq();
-            click_at(r.left + 50, r.bottom - 29);
+            sleep(300);
+            click_ui("card.Copy");
             wait(2000, || seq() != s0);
             let hdrop = unsafe { IsClipboardFormatAvailable(15).is_ok() };
             rep.check("V2 Copy puts the video file on the clipboard", hdrop, "");
             // V3: GIF export.
             let gifs = files_with("gif").len();
-            // Card buttons: Copy, Save to, Folder, GIF, Edit (64 px each after a 10 px pad).
-            click_at(r.left + 10 + 64 * 3 + 32, r.bottom - 29);
+            click_ui("card.Gif");
             let made = wait(30000, || files_with("gif").len() > gifs) && {
                 sleep(1500);
                 true
@@ -1340,6 +1422,7 @@ mod e2e {
         sleep(500);
         let before = files_with("mp4").len();
         let mut bar_rect = None;
+        let mut under_bar: Option<Frame> = None;
         if open_overlay().is_some() {
             move_to(PAT.left + 50, PAT.top + 50);
             sleep(400);
@@ -1351,6 +1434,8 @@ mod e2e {
             if wait(4000, || visible(w!("RengiSnapBar"))) {
                 sleep(900);
                 bar_rect = find(w!("RengiSnapBar")).map(|h| window_rect(h.0 as isize));
+                // A GDI grab also leaves the bar out: it shows what is under it.
+                under_bar = Some(grab_screen());
                 screenshot(&rep.dir, "v5-fullscreen-recording");
                 sleep(600);
                 tap(VK_SCROLL);
@@ -1365,21 +1450,22 @@ mod e2e {
                 rep.check("V5 720p option gives 960x720", (i.w, i.h) == (960, 720), &format!("{}x{}", i.w, i.h));
                 if let Some(f) = &i.sample {
                     let _ = std::fs::write(rep.dir.join("v5-frame10.png"), f.encode_png());
-                    // Count bar-coloured pixels (#1E1E20) where the bar was, scaled to 960/1024.
+                    // Where the bar was, the video must show what is under it (as a
+                    // GDI grab sees it), not the bar. Video is 960/1024 scale.
                     let sc = 960.0 / 1024.0;
-                    let (mut dark, mut total) = (0, 0);
-                    for y in (bar.top as f64 * sc) as i32..(bar.bottom as f64 * sc) as i32 {
-                        for x in (bar.left as f64 * sc) as i32..(bar.right as f64 * sc) as i32 {
-                            if let Some(p) = f.pixel(x, y) {
-                                total += 1;
-                                if p.iter().all(|&c| (20..=45).contains(&c)) {
-                                    dark += 1;
+                    let (mut diff, mut total) = (0u64, 0u64);
+                    if let Some(g) = &under_bar {
+                        for y in bar.top..bar.bottom {
+                            for x in bar.left..bar.right {
+                                if let (Some(a), Some(b)) = (f.pixel((x as f64 * sc) as i32, (y as f64 * sc) as i32), g.pixel(x, y)) {
+                                    total += 1;
+                                    diff += a.iter().zip(b.iter()).map(|(p, q)| (*p as i32 - *q as i32).unsigned_abs() as u64).sum::<u64>() / 3;
                                 }
                             }
                         }
                     }
-                    let frac = dark as f64 / total.max(1) as f64;
-                    rep.check("V5 control bar is not in the video", frac < 0.3, &format!("{:.0}% bar-coloured", frac * 100.0));
+                    let mean = diff as f64 / total.max(1) as f64;
+                    rep.check("V5 control bar is not in the video", total > 0 && mean < 40.0, &format!("mean difference {mean:.1} over {total} px"));
                 }
             }
             (Some(Err(e)), _) => rep.check("V5 video decodes", false, &e),
@@ -1404,7 +1490,8 @@ mod e2e {
                 sleep(600);
                 let bar = window_rect(find(w!("RengiSnapBar")).unwrap().0 as isize);
                 screenshot(&rep.dir, "v6-bar");
-                click_at(bar.left + 6 + 92 + 2 * 34 + 17, bar.top + bar.height() / 2);
+                let _ = bar;
+                click_ui("bar.Discard");
                 wait(5000, || !visible(w!("RengiSnapBar")));
                 sleep(800);
                 rep.check("V6 Discard leaves no file", files_with("mp4").len() == before, "");
@@ -1416,7 +1503,8 @@ mod e2e {
             drag_to((region.left, region.top), (region.right, region.bottom));
             if wait(4000, || visible(w!("RengiSnapBar"))) {
                 let bar = window_rect(find(w!("RengiSnapBar")).unwrap().0 as isize);
-                let pause = (bar.left + 6 + 92 + 17, bar.top + bar.height() / 2);
+                let _ = bar;
+                let pause = ui_at("bar.Pause").unwrap_or((0, 0));
                 sleep(1000);
                 click_at(pause.0, pause.1);
                 sleep(1500);
@@ -1451,6 +1539,7 @@ mod e2e {
             .env("RENGI_SNAP_HOME", &home)
             .env("RENGI_SNAP_NO_AUTOSTART", "1")
             .env("RENGI_SNAP_BAR_VISIBLE", "1")
+            .arg("--background")
             .spawn()
         {
             app = c;
@@ -1461,7 +1550,10 @@ mod e2e {
                 if wait(4000, || visible(w!("RengiSnapBar"))) {
                     sleep(1300);
                     let bar = window_rect(find(w!("RengiSnapBar")).unwrap().0 as isize);
-                    move_to(bar.left + 6 + 92 + 17, bar.top + bar.height() / 2);
+                    let _ = bar;
+                    if let Some((x, y)) = ui_at("bar.Pause") {
+                        move_to(x, y);
+                    }
                     sleep(300);
                     screenshot(&rep.dir, "v8-bar-look");
                     tap(VK_SCROLL);
@@ -1531,7 +1623,7 @@ mod e2e {
         match make_test_video(&ve_src) {
             Err(e) => rep.check("VE test video written", false, &e),
             Ok(()) => {
-                let _ = Command::new(&exe).env("RENGI_SNAP_HOME", &home).env("RENGI_SNAP_NO_AUTOSTART", "1").arg("--edit").arg(&ve_src).spawn();
+                let _ = launch_with(&exe, &home, &["--edit", &ve_src.to_string_lossy()]);
                 let opened = wait(10_000, || visible(w!("RengiSnapVideoEditor")));
                 rep.check("VE --edit opens the video editor", opened, "");
                 if opened {
@@ -1544,19 +1636,17 @@ mod e2e {
                     }
                     sleep(2500);
                     let cl = client_screen(ed);
-                    // Layout of veditor.rs at 100% DPI.
-                    let (cw, ch) = (cl.width() as f32, cl.height() as f32);
-                    let top = (ch - 186.0).max(52.0 + 60.0);
-                    let ruler_y = cl.top + (top + 44.0 + 9.0) as i32;
-                    let clips_y = cl.top + (top + 44.0 + 20.0 + 32.0) as i32;
-                    let (x0, x1) = (16.0f32, cw - 16.0);
-                    let xt = |t: u32, total: u32| cl.left + (x0 + (x1 - x0) * t as f32 / total as f32).round() as i32;
-                    let (aw, ah) = (cw - 32.0, top - 52.0 - 32.0);
-                    let k = (aw / 640.0).min(ah / 360.0);
-                    let (pw, ph) = (640.0 * k, 360.0 * k);
-                    let (pl, pt) = (((cw - pw) / 2.0).round(), (52.0 + 16.0 + (ah - ph) / 2.0).round());
-                    let src_pt = |x: f32, y: f32| (cl.left + (pl + x * k) as i32, cl.top + (pt + y * k) as i32);
-                    rep.line(&format!("VE client {cl:?}, preview at ({pl},{pt}) x{k:.3}"));
+                    // Where the editor says its parts are.
+                    let ruler = ui("veditor.ruler").unwrap_or_default();
+                    let clips = ui("veditor.clips").unwrap_or_default();
+                    let pic = ui("veditor.pic").unwrap_or_default();
+                    let ruler_y = ruler.top + ruler.height() / 2;
+                    let clips_y = clips.top + clips.height() / 2;
+                    let (x0, x1) = (ruler.left as f32, ruler.right as f32);
+                    let xt = |t: u32, total: u32| (x0 + (x1 - x0) * t as f32 / total as f32).round() as i32;
+                    let k = pic.width() as f32 / 640.0;
+                    let src_pt = |x: f32, y: f32| (pic.left + (x * k) as i32, pic.top + (y * k) as i32);
+                    rep.line(&format!("VE client {cl:?}, preview {pic:?} x{k:.3}, ruler {ruler:?}"));
                     screenshot(&rep.dir, "ve0-editor");
                     click_at(xt(1000, 4000), ruler_y);
                     sleep(300);
@@ -1571,7 +1661,7 @@ mod e2e {
                     tap(VK_DELETE);
                     sleep(500);
                     screenshot(&rep.dir, "ve1-cut");
-                    drag_to((xt(1500, 2000), clips_y), (cl.left + 20, clips_y));
+                    drag_to((xt(1500, 2000), clips_y), (clips.left + 4, clips_y));
                     sleep(600);
                     screenshot(&rep.dir, "ve2-reordered");
                     click_at(xt(0, 2000) + 1, ruler_y);
@@ -1638,6 +1728,120 @@ mod e2e {
                 }
             }
         }
+
+        // HM: Home. A plain second launch (Start menu, Explorer) brings it up.
+        let test_windows: Vec<HWND> = [w!("E2EPattern"), w!("E2ENested"), w!("E2EPainted"), w!("E2EAnim")].iter().filter_map(|c| find(*c)).collect();
+        for h in &test_windows {
+            unsafe {
+                let _ = ShowWindow(*h, SW_HIDE);
+            }
+        }
+        let theme_name = |light: bool| if light { "light" } else { "dark" };
+        let show_home = |rep: &mut Report, what: &str| -> bool {
+            let _ = launch_with(&exe, &home, &[]);
+            let ok = wait(5000, || visible(w!("RengiSnapHome")));
+            rep.check(what, ok, "");
+            ok
+        };
+        if show_home(&mut rep, "HM a plain second launch shows Home") {
+            sleep(1500);
+            screenshot(&rep.dir, &format!("hm1-home-{}", theme_name(started_light)));
+            rep.check("HM Recent lists the captures", ui("home.recent0").is_some(), "");
+            click_ui("home.screenshot");
+            let ov = wait(4000, overlay_visible);
+            rep.check("HM Screenshot tile opens the overlay with Home out of the way", ov && !visible(w!("RengiSnapHome")), "");
+            close_overlay_if_open();
+            if show_home(&mut rep, "HM Home shows again") {
+                sleep(500);
+                click_ui("home.record");
+                let ov = wait(4000, overlay_visible);
+                sleep(400);
+                let cfg = std::fs::read_to_string(home.join("config.toml")).unwrap_or_default();
+                rep.check("HM Record tile opens the overlay in Video mode", ov && cfg.contains("mode = \"video\""), "");
+                screenshot(&rep.dir, "hm2-record-overlay");
+                click_ui("panel.Photo");
+                sleep(300);
+                close_overlay_if_open();
+            }
+        }
+
+        // TH: switch Windows to the other theme while the app runs; every
+        // window follows.
+        let other = !started_light;
+        set_light_theme(other);
+        sleep(1200);
+        if show_home(&mut rep, "TH Home shows after the theme switch") {
+            sleep(1200);
+            screenshot(&rep.dir, &format!("th1-home-{}", theme_name(other)));
+            if let Some(h) = find(w!("RengiSnapHome")) {
+                unsafe {
+                    let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            }
+            rep.check("TH closing Home only hides it", wait(2000, || !visible(w!("RengiSnapHome"))) && matches!(app.try_wait(), Ok(None)), "");
+        }
+        for h in &test_windows {
+            unsafe {
+                let _ = ShowWindow(*h, SW_SHOWNOACTIVATE);
+            }
+        }
+        sleep(300);
+        let s0 = seq();
+        if open_overlay().is_some() {
+            key(VK_CONTROL, false);
+            drag_to((PAT.left + 40, PAT.top + 40), (PAT.left + 300, PAT.top + 220));
+            sleep(60);
+            key(VK_CONTROL, true);
+            sleep(400);
+            if let Some((x, y)) = ui_at("panel.Video") {
+                move_to(x, y);
+            }
+            sleep(300);
+            screenshot(&rep.dir, &format!("th2-overlay-{}", theme_name(other)));
+            tap(VK_RETURN);
+            wait(4000, || seq() != s0);
+            if wait(2000, || visible(w!("RengiSnapCard"))) {
+                sleep(600);
+                screenshot(&rep.dir, &format!("th3-card-{}", theme_name(other)));
+                for h in &test_windows {
+                    unsafe {
+                        let _ = ShowWindow(*h, SW_HIDE);
+                    }
+                }
+                click_ui("card.Edit");
+                if wait(4000, || visible(w!("RengiSnapEditor"))) {
+                    sleep(900);
+                    if let Some((x, y)) = ui_at("editor.tool.Arrow") {
+                        move_to(x, y);
+                    }
+                    sleep(400);
+                    screenshot(&rep.dir, &format!("th4-editor-{}", theme_name(other)));
+                    if let Some(ed) = find(w!("RengiSnapEditor")) {
+                        unsafe {
+                            let _ = PostMessageW(Some(ed), WM_CLOSE, WPARAM(0), LPARAM(0));
+                        }
+                    }
+                    wait(3000, || find(w!("RengiSnapEditor")).is_none());
+                }
+            }
+        }
+        close_overlay_if_open();
+        let ve_src = pictures().join("ve-src.mp4");
+        if ve_src.exists() {
+            let _ = launch_with(&exe, &home, &["--edit", &ve_src.to_string_lossy()]);
+            if wait(10_000, || visible(w!("RengiSnapVideoEditor"))) {
+                sleep(2500);
+                screenshot(&rep.dir, &format!("th5-veditor-{}", theme_name(other)));
+                if let Some(ed) = find(w!("RengiSnapVideoEditor")) {
+                    unsafe {
+                        let _ = PostMessageW(Some(ed), WM_CLOSE, WPARAM(0), LPARAM(0));
+                    }
+                }
+                wait(4000, || find(w!("RengiSnapVideoEditor")).is_none());
+            }
+        }
+        set_light_theme(started_light);
+        sleep(500);
 
         let scroll_after = unsafe { GetKeyState(VK_SCROLL.0 as i32) } & 1;
         rep.check("Scroll Lock state never toggled", scroll_before == scroll_after, "");

@@ -14,6 +14,10 @@ pub struct Gfx {
     pub d2d: ID2D1Factory1,
     pub dw: IDWriteFactory,
     pub icon_family: HSTRING,
+    /// Segoe UI Variable Text (Windows 11) or Segoe UI.
+    pub text_family: HSTRING,
+    /// Segoe UI Variable Display or Segoe UI, for big titles.
+    pub display_family: HSTRING,
 }
 
 impl Gfx {
@@ -22,7 +26,9 @@ impl Gfx {
             let d2d: ID2D1Factory1 = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             let dw: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
             let icon_family = pick_icon_family(&dw);
-            Ok(Gfx { d2d, dw, icon_family })
+            let text_family = pick_family(&dw, &["Segoe UI Variable Text", "Segoe UI"]);
+            let display_family = pick_family(&dw, &["Segoe UI Variable Display", "Segoe UI"]);
+            Ok(Gfx { d2d, dw, icon_family, text_family, display_family })
         }
     }
 
@@ -62,7 +68,12 @@ impl Gfx {
     }
 
     pub fn ui_font(&self, size: f32, bold: bool) -> Result<IDWriteTextFormat> {
-        self.text_format(&HSTRING::from("Segoe UI"), size, bold)
+        self.text_format(&self.text_family, size, bold)
+    }
+
+    /// Large titles.
+    pub fn display_font(&self, size: f32, bold: bool) -> Result<IDWriteTextFormat> {
+        self.text_format(&self.display_family, size, bold)
     }
 
     pub fn icon_font(&self, size: f32) -> Result<IDWriteTextFormat> {
@@ -87,6 +98,24 @@ impl Gfx {
             }
         }
     }
+}
+
+fn family_exists(dw: &IDWriteFactory, name: &str) -> bool {
+    unsafe {
+        let mut coll = None;
+        if dw.GetSystemFontCollection(&mut coll, false).is_ok() {
+            if let Some(coll) = coll {
+                let mut idx = 0;
+                let mut exists = BOOL(0);
+                return coll.FindFamilyName(&HSTRING::from(name), &mut idx, &mut exists).is_ok() && exists.as_bool();
+            }
+        }
+    }
+    false
+}
+
+fn pick_family(dw: &IDWriteFactory, names: &[&str]) -> HSTRING {
+    names.iter().find(|n| family_exists(dw, n)).map(|n| HSTRING::from(*n)).unwrap_or_else(|| HSTRING::from("Segoe UI"))
 }
 
 /// Windows 11 ships "Segoe Fluent Icons", Windows 10 "Segoe MDL2 Assets"; same code points.
@@ -128,6 +157,18 @@ pub fn bitmap(rt: &ID2D1RenderTarget, w: u32, h: u32, pixels: &[u8]) -> Result<I
     unsafe {
         let props = D2D1_BITMAP_PROPERTIES {
             pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_IGNORE },
+            dpiX: 96.0,
+            dpiY: 96.0,
+        };
+        rt.CreateBitmap(D2D_SIZE_U { width: w, height: h }, Some(pixels.as_ptr() as *const _), w * 4, &props)
+    }
+}
+
+/// Uploads top-down premultiplied BGRA pixels, keeping alpha.
+pub fn bitmap_premul(rt: &ID2D1RenderTarget, w: u32, h: u32, pixels: &[u8]) -> Result<ID2D1Bitmap> {
+    unsafe {
+        let props = D2D1_BITMAP_PROPERTIES {
+            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
             dpiX: 96.0,
             dpiY: 96.0,
         };

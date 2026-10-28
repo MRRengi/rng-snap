@@ -7,10 +7,13 @@ mod gifenc;
 mod icon;
 mod image;
 mod mixer;
+mod palette;
+mod recent;
 mod regions;
 mod select;
 mod vedit;
 mod videoplan;
+mod winres;
 #[cfg(windows)]
 mod win;
 

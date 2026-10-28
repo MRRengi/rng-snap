@@ -7,13 +7,16 @@ mod elements;
 mod files;
 mod grab;
 mod hook;
+mod home;
 pub mod mp4read;
 mod overlay;
 mod paths;
 mod recbar;
 mod record;
 mod toolstrip;
+mod theme;
 mod tray;
+mod uimap;
 mod util;
 mod vaudio;
 mod vexport;
@@ -36,8 +39,12 @@ pub const WM_APP_ELEMENTS: u32 = WM_APP + 4;
 pub const WM_APP_GIF: u32 = WM_APP + 5;
 /// Open the video handed over by another instance.
 pub const WM_APP_EDIT: u32 = WM_APP + 6;
+/// Show Home (a second launch from Start or Explorer).
+pub const WM_APP_HOME: u32 = WM_APP + 7;
 /// The editor changed the image: copy it after a short pause.
 pub const AUTOCOPY_TIMER: usize = 7;
+/// Start the capture asked for on Home once Home has disappeared.
+pub const HOME_CAPTURE_TIMER: usize = 8;
 
 pub mod class_name {
     use windows::core::{PCWSTR, w};
@@ -48,4 +55,5 @@ pub mod class_name {
     pub const OUTLINE: PCWSTR = w!("RengiSnapOutline");
     pub const EDITOR: PCWSTR = w!("RengiSnapEditor");
     pub const VEDITOR: PCWSTR = w!("RengiSnapVideoEditor");
+    pub const HOME: PCWSTR = w!("RengiSnapHome");
 }

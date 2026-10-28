@@ -3,8 +3,8 @@
 //! copy the result to the clipboard.
 
 use super::class_name;
-use super::d2d::{self, Gfx, rect_f, rgba};
-use super::overlay::ACCENT;
+use super::d2d::{self, Gfx, rect_f};
+use super::theme::{self, Backdrop, Blur};
 use super::toolstrip::{Btn, Slot, Strip, StripState};
 use super::util::lparam_point;
 use crate::annot::edit::{Canvas, Change, Handle, Key};
@@ -19,15 +19,15 @@ use tiny_skia::Pixmap;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
-use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
 use windows::Win32::Graphics::Gdi::*;
+use windows::core::Interface;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const CARET_TIMER: usize = 1;
 const STATUS_TIMER: usize = 2;
-const BG: u32 = 0x161618;
+const ANIM_TIMER: usize = 3;
 
 pub enum Event {
     /// The image changed: copy it to the clipboard soon.
@@ -101,6 +101,9 @@ pub struct Editor {
     min_w: i32,
     /// Area shown last frame, to keep the view steady when it changes.
     last_area: Rect,
+    /// Offscreen copy of everything under the floating chrome, for the glass blur.
+    scene: Option<(u32, u32, ID2D1BitmapRenderTarget)>,
+    blur: Blur,
 }
 
 fn dpi_scale(h: HWND) -> f32 {
@@ -128,10 +131,7 @@ impl Editor {
             )?
         };
         let scale = dpi_scale(hwnd);
-        unsafe {
-            let dark = 1u32;
-            let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as *const _, 4);
-        }
+        theme::apply_window(hwnd);
         let mut canvas = Canvas::new(Rect::new(0, 0, bw, bh), scale, fonts);
         canvas.items = items;
         canvas.tool = if style.0 == Tool::Crop { Tool::Arrow } else { style.0 };
@@ -160,16 +160,19 @@ impl Editor {
             last_cursor: Point::default(),
             min_w: 0,
             last_area: Rect::new(0, 0, bw, bh),
+            scene: None,
+            blur: Blur::default(),
         };
+        ed.strip.animate = true;
         ed.strip.layout(gfx, &SLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
-        ed.min_w = ed.strip.rect.width() + (16.0 * scale) as i32;
+        ed.min_w = ed.strip.rect.width() + (ed.margin() * 2.0) as i32;
         // Size: image + chrome, at most 85% of the work area, centred on the capture's monitor.
         unsafe {
             let m = MonitorFromPoint(POINT { x: near.left + near.width() / 2, y: near.top + near.height() / 2 }, MONITOR_DEFAULTTONEAREST);
             let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
             let _ = GetMonitorInfoW(m, &mut info);
             let work = super::util::to_rect(info.rcWork);
-            let bar = ed.bar_h();
+            let bar = ed.chrome_top();
             let mut want = RECT { left: 0, top: 0, right: (bw + (48.0 * scale) as i32).max(ed.min_w), bottom: bh + bar + (48.0 * scale) as i32 };
             let _ = AdjustWindowRectEx(&mut want, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE(0));
             let mut min_win = RECT { left: 0, top: 0, right: ed.min_w, bottom: 10 };
@@ -192,8 +195,41 @@ impl Editor {
         (self.canvas.tool, self.canvas.color, self.canvas.width_idx)
     }
 
+    /// Height of the floating toolbar capsule.
     fn bar_h(&self) -> i32 {
-        (52.0 * self.scale).round() as i32
+        (48.0 * self.scale).round() as i32
+    }
+
+    /// Gap between the window edge and the floating chrome.
+    fn margin(&self) -> f32 {
+        10.0 * self.scale
+    }
+
+    /// The image is fitted below this line so the toolbar doesn't cover it.
+    fn chrome_top(&self) -> i32 {
+        self.bar_h() + (self.margin() * 2.0) as i32
+    }
+
+    fn in_bar(&self, p: Point) -> bool {
+        self.strip.rect.contains(p)
+    }
+
+    /// Lays the toolbar out at its natural width, centred at the top.
+    fn place_strip(&mut self, gfx: &Gfx, cw: i32) {
+        let m = self.margin().round() as i32;
+        self.strip.layout(gfx, &SLOTS, Point::new(0, m), self.bar_h(), 0, self.scale);
+        let x = ((cw - self.strip.rect.width()) / 2).max(m);
+        self.strip.translate(x, 0);
+        let mut o = POINT::default();
+        unsafe {
+            let _ = ClientToScreen(self.hwnd, &mut o);
+        }
+        self.strip.publish("editor", |r| r.offset(o.x, o.y));
+    }
+
+    pub fn theme_changed(&mut self) {
+        theme::apply_window(self.hwnd);
+        self.invalidate();
     }
 
     /// The part of the image shown (crop or all of it).
@@ -258,8 +294,7 @@ impl Editor {
             }
             _ => {}
         }
-        let bar = self.bar_h();
-        self.strip.layout(gfx, &SLOTS, Point::new(0, 0), bar, w as i32, self.scale);
+        self.place_strip(gfx, w as i32);
         if self.fit {
             self.fit_view();
         }
@@ -268,7 +303,7 @@ impl Editor {
 
     fn fit_view(&mut self) {
         let (cw, ch) = self.client();
-        let bar = self.bar_h() as f32;
+        let bar = self.chrome_top() as f32;
         let a = self.area();
         let pad = 24.0 * self.scale;
         let avail_w = (cw as f32 - pad * 2.0).max(50.0);
@@ -391,6 +426,13 @@ impl Editor {
                     if self.canvas.text.is_some() {
                         self.invalidate();
                     }
+                } else if wp.0 == ANIM_TIMER {
+                    if !self.strip.step() {
+                        unsafe {
+                            let _ = KillTimer(Some(self.hwnd), ANIM_TIMER);
+                        }
+                    }
+                    self.invalidate();
                 } else if wp.0 == STATUS_TIMER {
                     unsafe {
                         let _ = KillTimer(Some(self.hwnd), STATUS_TIMER);
@@ -410,9 +452,13 @@ impl Editor {
             WM_MOUSEMOVE => {
                 let p = lparam_point(lp.0);
                 self.last_cursor = p;
-                let hov = if p.y < self.bar_h() { self.strip.hit(p) } else { None };
+                let hov = if self.in_bar(p) { self.strip.hit(p) } else { None };
                 if hov != self.strip.hover {
-                    self.strip.hover = hov;
+                    if self.strip.set_hover(hov) {
+                        unsafe {
+                            SetTimer(Some(self.hwnd), ANIM_TIMER, 15, None);
+                        }
+                    }
                     self.invalidate();
                 }
                 if let Some((start, o)) = self.pan {
@@ -434,7 +480,7 @@ impl Editor {
                     SetCapture(self.hwnd);
                     let _ = SetFocus(Some(self.hwnd));
                 }
-                if p.y < self.bar_h() {
+                if self.in_bar(p) {
                     self.strip.press = self.strip.hit(p);
                     self.invalidate();
                     return (Some(LRESULT(0)), None);
@@ -479,7 +525,7 @@ impl Editor {
             }
             WM_LBUTTONDBLCLK => {
                 let p = lparam_point(lp.0);
-                if p.y >= self.bar_h() {
+                if !self.in_bar(p) {
                     let ch = self.canvas.double_click(self.to_img(p));
                     return (Some(LRESULT(0)), self.apply(ch));
                 }
@@ -597,7 +643,7 @@ impl Editor {
 
     fn set_cursor(&self) {
         let p = self.last_cursor;
-        let id = if p.y < self.bar_h() {
+        let id = if self.in_bar(p) {
             if self.strip.hit(p).is_some() { IDC_HAND } else { IDC_ARROW }
         } else if self.space || self.pan.is_some() {
             IDC_SIZEALL
@@ -618,9 +664,25 @@ impl Editor {
         }
     }
 
+    /// Offscreen target the size of the window; the scene is drawn here so
+    /// the glass chrome can blur it.
+    fn scene_target(&mut self, rt: &ID2D1HwndRenderTarget) -> Option<ID2D1BitmapRenderTarget> {
+        let (w, h) = self.rt_size;
+        if let Some((sw, sh, t)) = &self.scene {
+            if (*sw, *sh) == (w, h) {
+                return Some(t.clone());
+            }
+        }
+        let t = unsafe { rt.CreateCompatibleRenderTarget(None, Some(&D2D_SIZE_U { width: w, height: h }), None, D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE).ok()? };
+        unsafe { t.SetDpi(96.0, 96.0) };
+        self.scene = Some((w, h, t.clone()));
+        Some(t)
+    }
+
     fn render(&mut self, gfx: &Gfx) {
         let Some(rt) = self.rt.clone() else { return };
         let s = self.scale;
+        let p = theme::pal();
         let area = self.area();
         // Crop applied or undone: re-fit, or keep the same pixels in place.
         if area != self.last_area {
@@ -643,48 +705,69 @@ impl Editor {
         }
         let rt1: &ID2D1RenderTarget = &rt;
         let (cw, chh) = (self.rt_size.0 as f32, self.rt_size.1 as f32);
+        let scene = self.scene_target(&rt);
         unsafe {
-            rt.BeginDraw();
-            rt.Clear(Some(&rgba(BG, 1.0)));
+            // 1. The scene: canvas, image, selection UI.
+            let target: &ID2D1RenderTarget = match &scene {
+                Some(t) => t,
+                None => rt1,
+            };
+            if scene.is_some() {
+                target.BeginDraw();
+            } else {
+                rt.BeginDraw();
+            }
+            target.Clear(Some(&theme::color(p.canvas)));
             if let Some((_, _, bmp)) = &self.cache {
                 let (x, y) = self.origin;
                 let d = rect_f(x, y, x + area.width() as f32 * self.zoom, y + area.height() as f32 * self.zoom);
-                if let Ok(sh) = d2d::brush(rt1, rgba(0x000000, 0.35)) {
-                    rt.FillRectangle(&rect_f(d.left + 3.0, d.top + 4.0, d.right + 3.0, d.bottom + 4.0), &sh);
-                }
+                let mut o = POINT::default();
+                let _ = ClientToScreen(self.hwnd, &mut o);
+                super::uimap::put("editor.image", Rect::new(d.left.round() as i32 + o.x, d.top.round() as i32 + o.y, d.right.round() as i32 + o.x, d.bottom.round() as i32 + o.y));
+                theme::shadow(target, d, 2.0 * s, s, 0.8);
                 let mode = if self.zoom >= 2.0 { D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR } else { D2D1_BITMAP_INTERPOLATION_MODE_LINEAR };
-                match d2d::as_device_context(&rt) {
-                    Some(dc) if self.zoom < 1.0 => dc.DrawBitmap(bmp, Some(&d), 1.0, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, None, None),
-                    _ => rt.DrawBitmap(bmp, Some(&d), 1.0, mode, None),
+                match target.cast::<ID2D1DeviceContext>() {
+                    Ok(dc) if self.zoom < 1.0 => dc.DrawBitmap(bmp, Some(&d), 1.0, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, None, None),
+                    _ => target.DrawBitmap(bmp, Some(&d), 1.0, mode, None),
                 }
             }
-            self.draw_marks_ui(rt1);
-            // Toolbar.
-            if let Ok(bar_bg) = d2d::brush(rt1, rgba(0x1E1E20, 1.0)) {
-                rt.FillRectangle(&rect_f(0.0, 0.0, cw, self.bar_h() as f32), &bar_bg);
+            self.draw_marks_ui(target);
+            // 2. The scene onto the window, then the glass chrome over it.
+            let mut blurred = None;
+            if let Some(t) = &scene {
+                let _ = t.EndDraw(None, None);
+                rt.BeginDraw();
+                if let Ok(b) = t.GetBitmap() {
+                    rt.DrawBitmap(&b, None, 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None);
+                    blurred = self.blur.image(rt1, &b, 22.0 * s);
+                }
             }
-            if let Ok(line) = d2d::brush(rt1, rgba(0xFFFFFF, 0.08)) {
-                rt.FillRectangle(&rect_f(0.0, self.bar_h() as f32 - 1.0, cw, self.bar_h() as f32), &line);
-            }
+            let back = blurred.as_ref().map(|image| Backdrop { image, origin: (0.0, 0.0), zoom: 1.0 });
             let st = self.state();
-            self.strip.draw(rt1, gfx, &st, (0.0, 0.0), false);
-            // Status line bottom-left, zoom bottom-right.
+            self.strip.draw(rt1, gfx, &st, (0.0, 0.0), Some(back.as_ref()));
+            // Status bottom-left, zoom bottom-right: small glass pills.
             if self.status_font.as_ref().map(|f| f.0) != Some(s) {
-                if let Ok(f) = gfx.ui_font(12.0 * s, false) {
+                if let Ok(f) = gfx.ui_font(12.5 * s, true) {
                     self.status_font = Some((s, f));
                 }
             }
-            if let (Some((_, f)), Ok(b), Ok(pill)) = (&self.status_font, d2d::brush(rt1, rgba(0xFFFFFF, 0.75)), d2d::brush(rt1, rgba(0x000000, 0.55))) {
+            if let (Some((_, f)), Some(b)) = (&self.status_font, theme::brush(rt1, p.label)) {
+                let m = self.margin();
+                let ph = 30.0 * s;
                 let z = format!("{}%", (self.zoom * 100.0).round());
-                let zw = 52.0 * s;
-                let zr = rect_f(cw - zw - 10.0 * s, chh - 28.0 * s, cw - 10.0 * s, chh - 8.0 * s);
-                rt.FillRoundedRectangle(&d2d::round_rect(zr, 6.0 * s), &pill);
-                d2d::draw_text(rt1, f, &z, rect_f(zr.left + 10.0 * s, zr.top + 2.0 * s, zr.right, zr.bottom), &b);
+                let zw = gfx.measure(f, &z) + 26.0 * s;
+                let zr = rect_f(cw - zw - m, chh - ph - m, cw - m, chh - m);
+                theme::glass(rt1, gfx, zr, ph / 2.0, s, back.as_ref());
+                d2d::draw_text(rt1, f, &z, rect_f(zr.left + 13.0 * s, zr.top + 6.5 * s, zr.right, zr.bottom), &b);
                 if !self.status.is_empty() {
-                    let w = gfx.measure(f, &self.status) + 24.0 * s;
-                    let r = rect_f(10.0 * s, chh - 28.0 * s, 10.0 * s + w, chh - 8.0 * s);
-                    rt.FillRoundedRectangle(&d2d::round_rect(r, 6.0 * s), &pill);
-                    d2d::draw_text(rt1, f, &self.status, rect_f(r.left + 12.0 * s, r.top + 2.0 * s, r.right, r.bottom), &b);
+                    let w = gfx.measure(f, &self.status) + 30.0 * s;
+                    let r = rect_f(m, chh - ph - m, m + w, chh - m);
+                    theme::glass(rt1, gfx, r, ph / 2.0, s, back.as_ref());
+                    if let Some(ok) = theme::brush(rt1, p.green) {
+                        let e = D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: r.left + 13.0 * s, Y: (r.top + r.bottom) / 2.0 }, radiusX: 3.0 * s, radiusY: 3.0 * s };
+                        rt.FillEllipse(&e, &ok);
+                    }
+                    d2d::draw_text(rt1, f, &self.status, rect_f(r.left + 22.0 * s, r.top + 6.5 * s, r.right, r.bottom), &b);
                 }
             }
             let _ = rt.EndDraw(None, None);
@@ -694,7 +777,8 @@ impl Editor {
     /// Selection handles, text box and caret, crop draft.
     unsafe fn draw_marks_ui(&self, rt: &ID2D1RenderTarget) {
         let s = self.scale;
-        let (Ok(acc), Ok(white), Ok(dim)) = (d2d::brush(rt, rgba(ACCENT, 1.0)), d2d::brush(rt, rgba(0xFFFFFF, 1.0)), d2d::brush(rt, rgba(0x000000, 0.5))) else { return };
+        let p = theme::pal();
+        let (Some(acc), Some(white), Some(dim)) = (theme::brush(rt, p.accent), d2d::brush(rt, d2d::rgba(0xFFFFFF, 1.0)).ok(), d2d::brush(rt, d2d::rgba(0x000000, 0.5)).ok()) else { return };
         let c = &self.canvas;
         if let Some(i) = c.selected {
             if let Some(it) = c.items.get(i) {
@@ -705,12 +789,7 @@ impl Editor {
             }
             for (_, hp) in c.handles() {
                 let (x, y) = self.to_screen(hp);
-                let hs = 4.5 * s;
-                let r = rect_f(x - hs, y - hs, x + hs, y + hs);
-                unsafe {
-                    rt.FillRectangle(&r, &white);
-                    rt.DrawRectangle(&r, &acc, 1.0, None);
-                }
+                handle_dot(rt, x, y, s, &white, &acc);
             }
         }
         if let Some(t) = &c.text {
@@ -718,7 +797,7 @@ impl Editor {
                 let (l, tp, r, b) = font::text_box(&f.text, t.size, &t.text, t.at.x, t.at.y);
                 let (x0, y0) = self.to_screen(P::new(l, tp));
                 let (x1, y1) = self.to_screen(P::new(r, b));
-                unsafe { rt.DrawRectangle(&rect_f(x0 - 4.0, y0 - 3.0, x1 + 4.0, y1 + 3.0), &acc, 1.0, None) };
+                unsafe { rt.DrawRoundedRectangle(&theme::round(rect_f(x0 - 5.0, y0 - 4.0, x1 + 5.0, y1 + 4.0), 4.0 * s), &acc, 1.0, None) };
                 if self.caret_on {
                     let last = t.text.split('\n').last().unwrap_or("");
                     let lines = t.text.split('\n').count().max(1) as f32;
@@ -727,7 +806,7 @@ impl Editor {
                     let cy = t.at.y + lh * (lines - 1.0);
                     let (sx, sy) = self.to_screen(P::new(cx, cy));
                     let (_, ey) = self.to_screen(P::new(cx, cy + lh));
-                    unsafe { rt.FillRectangle(&rect_f(sx + 1.0, sy + 2.0, sx + 1.0 + 1.5 * s, ey - 2.0), &acc) };
+                    unsafe { rt.FillRoundedRectangle(&theme::round(rect_f(sx + 1.0, sy + 2.0, sx + 1.0 + 2.0 * s, ey - 2.0), 1.0 * s), &acc) };
                 }
             }
         }
@@ -749,5 +828,19 @@ impl Editor {
         }
         let _ = Handle::A;
         let _ = Shape::Step { c: P::default(), r: 0.0 };
+    }
+}
+
+/// Apple-style resize handle: a white dot with a soft shadow and an accent ring.
+pub fn handle_dot(rt: &ID2D1RenderTarget, x: f32, y: f32, s: f32, white: &ID2D1SolidColorBrush, ring: &ID2D1SolidColorBrush) {
+    let r = 5.0 * s;
+    unsafe {
+        if let Ok(sh) = d2d::brush(rt, d2d::rgba(0x000000, 0.28)) {
+            let e = D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: x, Y: y + 1.0 * s }, radiusX: r + 1.5 * s, radiusY: r + 1.5 * s };
+            rt.FillEllipse(&e, &sh);
+        }
+        let e = D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: x, Y: y }, radiusX: r, radiusY: r };
+        rt.FillEllipse(&e, white);
+        rt.DrawEllipse(&e, ring, 1.2 * s, None);
     }
 }

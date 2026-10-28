@@ -8,13 +8,15 @@
 use super::card::{self, Button, Card};
 use super::d2d::Gfx;
 use super::editor::{self, Editor};
+use super::home::{self, Home};
+use super::theme;
 use super::veditor::{self, VEditor};
 use crate::annot::{Color, Item, Tool};
 use super::overlay::{self, Overlay, PanelState};
 use super::recbar::{BarButton, RecBar};
 use super::record::{self, Recorder};
 use super::util::log;
-use super::{AUTOCOPY_TIMER, WM_APP_CAPTURE, WM_APP_EDIT, WM_APP_GIF, WM_APP_TRAY, class_name, clipboard, files, grab, hook, mp4read, paths, tray, wins};
+use super::{AUTOCOPY_TIMER, HOME_CAPTURE_TIMER, WM_APP_CAPTURE, WM_APP_EDIT, WM_APP_GIF, WM_APP_HOME, WM_APP_TRAY, class_name, clipboard, files, grab, hook, mp4read, paths, tray, wins};
 use crate::videoplan::{self, Res};
 use crate::config::Config;
 use crate::geom::{Point, Rect};
@@ -76,6 +78,9 @@ struct App {
     card_video: bool,
     icon: HICON,
     taskbar_created: u32,
+    home: Home,
+    /// Capture to start once Home is out of the way: true = video.
+    pending_capture: Option<bool>,
 }
 
 thread_local! {
@@ -98,7 +103,10 @@ pub fn run() {
     }
     let args: Vec<String> = std::env::args().collect();
     let want_capture = args.iter().any(|a| a == "--capture");
-    // `--edit <video>` opens the video editor (also used by "Open with").
+    // Autostart: tray only.
+    let background = args.iter().any(|a| a == "--background");
+    let want_quit = args.iter().any(|a| a == "--quit");
+    // `--edit <file>` opens a video or an image in its editor (also "Open with").
     let want_edit = args.iter().position(|a| a == "--edit").and_then(|i| args.get(i + 1)).map(PathBuf::from);
 
     // Single instance: a second launch hands its request to the running one.
@@ -107,13 +115,28 @@ pub fn run() {
         if let Ok(other) = unsafe { FindWindowW(class_name::MSG, None) } {
             unsafe {
                 match &want_edit {
+                    _ if want_quit => {
+                        let _ = PostMessageW(Some(other), WM_CLOSE, WPARAM(0), LPARAM(0));
+                        // Wait until it is really gone, so an installer can replace the exe.
+                        for _ in 0..50 {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if FindWindowW(class_name::MSG, None).is_err() {
+                                break;
+                            }
+                        }
+                    }
                     Some(p) => {
                         let w: Vec<u16> = p.as_os_str().encode_wide().collect();
                         let cds = windows::Win32::System::DataExchange::COPYDATASTRUCT { dwData: COPY_EDIT, cbData: (w.len() * 2) as u32, lpData: w.as_ptr() as *mut _ };
                         let _ = SendMessageW(other, WM_COPYDATA, None, Some(LPARAM(&cds as *const _ as isize)));
                     }
-                    None => {
+                    None if want_capture => {
                         let _ = PostMessageW(Some(other), WM_APP_CAPTURE, WPARAM(0), LPARAM(0));
+                    }
+                    None if background => {}
+                    None => {
+                        // Opened again from Start or Explorer: bring Home up.
+                        let _ = PostMessageW(Some(other), WM_APP_HOME, WPARAM(0), LPARAM(0));
                     }
                 }
             }
@@ -121,12 +144,15 @@ pub fn run() {
         return;
     }
 
-    dark_menus();
+    if want_quit {
+        return;
+    }
+    theme::menus_follow_theme();
     let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }.map(|m| m.into()).unwrap_or_default();
     register_classes(instance);
 
     let (cfg, cfg_path, first_run) = load_config();
-    if first_run && std::env::var_os("RENGI_SNAP_NO_AUTOSTART").is_none() {
+    if first_run && std::env::var_os("RENGI_SNAP_NO_AUTOSTART").is_none() && !files::installer_chose_autostart() {
         files::set_autostart(true);
     }
 
@@ -137,11 +163,17 @@ pub fn run() {
         log("cannot create message window");
         return;
     };
-    let (Ok(gfx), Ok(overlay), Ok(card), Ok(recbar)) = (Gfx::new(), Overlay::create(instance), Card::create(instance), RecBar::create(instance)) else {
+    let (Ok(gfx), Ok(overlay), Ok(card), Ok(recbar), Ok(home)) = (Gfx::new(), Overlay::create(instance), Card::create(instance), RecBar::create(instance), Home::create(instance)) else {
         log("cannot create graphics or windows");
         return;
     };
-    let icon = make_icon();
+    let small = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16) as usize;
+    let icon = make_icon(small);
+    unsafe {
+        let big = make_icon(GetSystemMetrics(SM_CXICON).max(32) as usize);
+        let _ = SendMessageW(home.hwnd, WM_SETICON, Some(WPARAM(ICON_BIG as usize)), Some(LPARAM(big.0 as isize)));
+        let _ = SendMessageW(home.hwnd, WM_SETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(icon.0 as isize)));
+    }
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
     tray::add(msg, icon);
     if !hook::install(msg, cfg.hotkey.clone()) {
@@ -165,6 +197,8 @@ pub fn run() {
             card_video: false,
             icon,
             taskbar_created,
+            home,
+            pending_capture: None,
         });
     });
     if want_capture {
@@ -173,7 +207,9 @@ pub fn run() {
         }
     }
     if let Some(p) = want_edit {
-        with_app(|a| a.open_video_editor(p));
+        with_app(|a| a.open_path(p));
+    } else if !want_capture && !background {
+        with_app(|a| a.show_home());
     }
 
     unsafe {
@@ -198,6 +234,7 @@ fn register_classes(instance: HINSTANCE) {
             (class_name::BAR, Some(bar_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DROPSHADOW),
             (class_name::EDITOR, Some(editor_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DBLCLKS),
             (class_name::VEDITOR, Some(veditor_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), CS_DBLCLKS),
+            (class_name::HOME, Some(home_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), WNDCLASS_STYLES(0)),
             (class_name::OUTLINE, Some(outline_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), WNDCLASS_STYLES(0)),
         ] {
             let wc = WNDCLASSEXW {
@@ -409,6 +446,58 @@ impl App {
             }
             Err(err) => e.set_status(format!("Saving failed: {err}")),
         }
+    }
+
+    fn home_info(&self) -> home::Info {
+        let folder = self.current_folder();
+        home::Info { hotkey: self.cfg.hotkey.label(), folder_label: files::short_label(&folder.to_string_lossy(), 34), folder, autostart: files::autostart_enabled() }
+    }
+
+    fn show_home(&mut self) {
+        let info = self.home_info();
+        self.home.show(&self.gfx, info);
+    }
+
+    fn refresh_home(&mut self) {
+        let info = self.home_info();
+        self.home.set_info(info);
+    }
+
+    fn theme_changed(&mut self) {
+        self.home.theme_changed();
+        self.card.theme_changed();
+        self.recbar.theme_changed();
+        if let Some(e) = &mut self.editor {
+            e.theme_changed();
+        }
+        if let Some(e) = &mut self.veditor {
+            e.theme_changed();
+        }
+    }
+
+    /// Opens a file in the editor that fits it: videos in the video editor,
+    /// images in the photo editor, anything else with Windows.
+    fn open_path(&mut self, path: PathBuf) {
+        match crate::recent::kind_of(&path) {
+            Some(crate::recent::Kind::Video) => self.open_video_editor(path),
+            Some(crate::recent::Kind::Image) => self.open_image(path),
+            _ => files::open_path(&path),
+        }
+    }
+
+    fn open_image(&mut self, path: PathBuf) {
+        let Some(frame) = std::fs::read(&path).ok().and_then(|b| crate::image::decode_png(&b)) else {
+            log(&format!("cannot read image {}", path.display()));
+            files::open_path(&path);
+            return;
+        };
+        let mut cur = POINT::default();
+        unsafe {
+            let _ = GetCursorPos(&mut cur);
+        }
+        let f = Rc::new(frame);
+        self.last = Some(Last { frame: f.clone(), base: f, items: Vec::new(), rect: Rect::from_xywh(cur.x, cur.y, 1, 1), saved: Some(path) });
+        self.open_editor();
     }
 
     fn open_video_editor(&mut self, path: PathBuf) {
@@ -1003,6 +1092,86 @@ unsafe extern "system" fn veditor_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
+fn on_home_event(ev: home::Event) {
+    match ev {
+        home::Event::Capture | home::Event::Record => {
+            let video = matches!(ev, home::Event::Record);
+            with_app(|a| {
+                a.home.hide();
+                a.pending_capture = Some(video);
+                unsafe {
+                    // Give DWM a moment to take Home off the screen before freezing it.
+                    SetTimer(Some(a.msg), HOME_CAPTURE_TIMER, 180, None);
+                }
+            });
+        }
+        home::Event::EditVideo => {
+            let owner = with_app(|a| a.home.hwnd).unwrap_or_default();
+            if let Some(p) = choose_video(owner) {
+                with_app(|a| a.open_video_editor(p));
+            }
+        }
+        home::Event::Open(p) => {
+            with_app(|a| a.open_path(p));
+        }
+        home::Event::Reveal(p) => {
+            if let Some(dir) = p.parent() {
+                files::open_folder(dir, Some(&p));
+            }
+        }
+        home::Event::OpenFolder => {
+            if let Some(f) = with_app(|a| a.current_folder()) {
+                files::open_folder(&f, None);
+            }
+        }
+        home::Event::Shortcut(at) => {
+            let Some((owner, current)) = with_app(|a| (a.home.hwnd, a.cfg.hotkey.clone())) else { return };
+            let presets = crate::config::Hotkey::presets();
+            let labels: Vec<String> = presets.iter().map(|h| h.label()).collect();
+            let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+            let checked = presets.iter().position(|h| *h == current).unwrap_or(usize::MAX);
+            if let Some(i) = files::choice_menu(owner, (at.x, at.y), &refs, checked) {
+                with_app(|a| {
+                    a.cfg.hotkey = presets[i].clone();
+                    hook::set_hotkey(&a.cfg.hotkey);
+                    a.save_config();
+                    a.refresh_home();
+                });
+            }
+        }
+        home::Event::Folder(at) => {
+            let Some(owner) = with_app(|a| a.home.hwnd) else { return };
+            if choose_folder(owner, at).is_some() {
+                with_app(|a| a.refresh_home());
+            }
+        }
+        home::Event::Autostart => {
+            files::set_autostart(!files::autostart_enabled());
+            with_app(|a| a.refresh_home());
+        }
+    }
+}
+
+unsafe extern "system" fn home_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if let Some(r) = home::frame_proc(hwnd, msg, wp, lp) {
+        return r;
+    }
+    let r = with_app(|a| {
+        let App { home, gfx, .. } = a;
+        (home.hwnd == hwnd).then(|| home.handle(gfx, msg, wp, lp))
+    })
+    .flatten();
+    if let Some((res, ev)) = r {
+        if let Some(ev) = ev {
+            on_home_event(ev);
+        }
+        if let Some(res) = res {
+            return res;
+        }
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+}
+
 unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if let Some((res, click, tick)) = with_app(|a| a.recbar.handle(msg, wp, lp)) {
         if tick {
@@ -1069,8 +1238,40 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         }
         m if m == WM_APP_EDIT => {
             if let Some(p) = PENDING_EDIT.with(|e| e.borrow_mut().take()) {
-                with_app(|a| a.open_video_editor(p));
+                with_app(|a| a.open_path(p));
             }
+            return LRESULT(0);
+        }
+        m if m == WM_APP_HOME => {
+            with_app(|a| a.show_home());
+            return LRESULT(0);
+        }
+        WM_SETTINGCHANGE => {
+            let what = if lp.0 != 0 { unsafe { windows::core::PCWSTR(lp.0 as *const u16).to_string().unwrap_or_default() } } else { String::new() };
+            if what == "ImmersiveColorSet" && theme::refresh() {
+                theme::menus_follow_theme();
+                with_app(|a| a.theme_changed());
+            }
+            return LRESULT(0);
+        }
+        WM_ENDSESSION if wp.0 != 0 => {
+            tray::remove(hwnd);
+            return LRESULT(0);
+        }
+        WM_TIMER if wp.0 == HOME_CAPTURE_TIMER => {
+            unsafe {
+                let _ = KillTimer(Some(hwnd), HOME_CAPTURE_TIMER);
+            }
+            with_app(|a| {
+                if let Some(video) = a.pending_capture.take() {
+                    let mode = if video { "video" } else { "photo" };
+                    if a.cfg.mode != mode {
+                        a.cfg.mode = mode.into();
+                        a.save_config();
+                    }
+                    a.start_capture();
+                }
+            });
             return LRESULT(0);
         }
         WM_APP_CAPTURE => {
@@ -1080,10 +1281,13 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         WM_APP_TRAY => {
             let event = (lp.0 & 0xFFFF) as u32;
             if event == NIN_SELECT || event == NIN_KEYSELECT || event == WM_LBUTTONUP {
-                with_app(|a| a.start_capture());
+                with_app(|a| a.show_home());
             } else if event == WM_CONTEXTMENU || event == WM_RBUTTONUP {
                 let auto = files::autostart_enabled();
                 match tray::menu(hwnd, auto) {
+                    tray::CMD_HOME => {
+                        with_app(|a| a.show_home());
+                    }
                     tray::CMD_CAPTURE => {
                         // Let the menu fade out before freezing the screen.
                         unsafe {
@@ -1100,7 +1304,10 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                             files::open_folder(&f, None);
                         }
                     }
-                    tray::CMD_AUTOSTART => files::set_autostart(!auto),
+                    tray::CMD_AUTOSTART => {
+                        files::set_autostart(!auto);
+                        with_app(|a| a.refresh_home());
+                    }
                     tray::CMD_EXIT => unsafe {
                         let _ = DestroyWindow(hwnd);
                     },
@@ -1174,8 +1381,7 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
-fn make_icon() -> HICON {
-    let n = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16) as usize;
+fn make_icon(n: usize) -> HICON {
     let px = crate::icon::pixels(n);
     unsafe {
         let info = BITMAPINFO {
@@ -1202,25 +1408,5 @@ fn make_icon() -> HICON {
         let _ = DeleteObject(color.into());
         let _ = DeleteObject(mask.into());
         icon
-    }
-}
-
-
-/// Dark popup menus to match the panel. Uses the uxtheme entry points every
-/// dark-mode Win32 app relies on (ordinals 135 SetPreferredAppMode and
-/// 136 FlushMenuThemes); on systems without them nothing happens.
-fn dark_menus() {
-    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-    use windows::core::PCSTR;
-    unsafe {
-        let Ok(m) = LoadLibraryW(w!("uxtheme.dll")) else { return };
-        if let Some(f) = GetProcAddress(m, PCSTR(135usize as *const u8)) {
-            let set: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
-            set(2); // ForceDark
-        }
-        if let Some(f) = GetProcAddress(m, PCSTR(136usize as *const u8)) {
-            let flush: unsafe extern "system" fn() = std::mem::transmute(f);
-            flush();
-        }
     }
 }

@@ -76,6 +76,57 @@ impl Frame {
     }
 }
 
+/// Decodes a PNG (any bit depth / colour type) into an opaque BGRA frame
+/// at (0, 0). Transparent pixels are composited over white.
+pub fn decode_png(bytes: &[u8]) -> Option<Frame> {
+    let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+    dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut r = dec.read_info().ok()?;
+    let mut buf = vec![0; r.output_buffer_size()?];
+    let info = r.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let ch = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return None,
+    };
+    let mut pixels = Vec::with_capacity(w * h * 4);
+    for px in buf[..w * h * ch].chunks_exact(ch) {
+        let (r, g, b, a) = match ch {
+            1 => (px[0], px[0], px[0], 255),
+            2 => (px[0], px[0], px[0], px[1]),
+            3 => (px[0], px[1], px[2], 255),
+            _ => (px[0], px[1], px[2], px[3]),
+        };
+        let mix = |c: u8| ((c as u32 * a as u32 + 255 * (255 - a as u32)) / 255) as u8;
+        pixels.extend_from_slice(&[mix(b), mix(g), mix(r), 255]);
+    }
+    Some(Frame { rect: Rect::from_xywh(0, 0, w as i32, h as i32), pixels })
+}
+
+/// First frame of a GIF as an opaque BGRA frame (transparent = white).
+pub fn decode_gif_first(bytes: &[u8]) -> Option<Frame> {
+    let mut opts = gif::DecodeOptions::new();
+    opts.set_color_output(gif::ColorOutput::RGBA);
+    let mut d = opts.read_info(std::io::Cursor::new(bytes)).ok()?;
+    let (sw, sh) = (d.width() as usize, d.height() as usize);
+    let f = d.read_next_frame().ok()??;
+    let mut pixels = vec![255u8; sw * sh * 4];
+    let (fl, ft, fw, fh) = (f.left as usize, f.top as usize, f.width as usize, f.height as usize);
+    for y in 0..fh.min(sh.saturating_sub(ft)) {
+        for x in 0..fw.min(sw.saturating_sub(fl)) {
+            let si = (y * fw + x) * 4;
+            let a = f.buffer[si + 3] as u32;
+            let mix = |c: u8| ((c as u32 * a + 255 * (255 - a)) / 255) as u8;
+            let di = ((ft + y) * sw + fl + x) * 4;
+            pixels[di..di + 4].copy_from_slice(&[mix(f.buffer[si + 2]), mix(f.buffer[si + 1]), mix(f.buffer[si]), 255]);
+        }
+    }
+    Some(Frame { rect: Rect::from_xywh(0, 0, sw as i32, sh as i32), pixels })
+}
+
 pub fn hex_color(bgr: [u8; 3]) -> String {
     format!("#{:02X}{:02X}{:02X}", bgr[2], bgr[1], bgr[0])
 }
@@ -126,6 +177,29 @@ mod tests {
         // Pixel (2,1) is BGR [2,1,7] -> RGB [7,1,2]
         let i = (1 * 4 + 2) * 3;
         assert_eq!(&buf[i..i + 3], &[7, 1, 2]);
+    }
+
+    #[test]
+    fn png_decodes_back_to_the_same_pixels() {
+        let f = frame();
+        let d = decode_png(&f.encode_png()).unwrap();
+        assert_eq!((d.width(), d.height()), (4, 3));
+        assert_eq!(d.pixel(2, 1), Some([2, 1, 7]));
+        assert!(decode_png(b"not a png").is_none());
+    }
+
+    #[test]
+    fn gif_first_frame() {
+        let mut out = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut out, 2, 1, &[255, 0, 0, 0, 0, 255]).unwrap();
+            let fr = gif::Frame { width: 2, height: 1, buffer: std::borrow::Cow::Borrowed(&[0, 1]), ..Default::default() };
+            enc.write_frame(&fr).unwrap();
+        }
+        let d = decode_gif_first(&out).unwrap();
+        assert_eq!((d.width(), d.height()), (2, 1));
+        assert_eq!(&d.pixels[0..3], &[0, 0, 255]);
+        assert_eq!(&d.pixels[4..7], &[255, 0, 0]);
     }
 
     #[test]

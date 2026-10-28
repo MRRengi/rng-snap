@@ -9,6 +9,7 @@ pub const CMD_OPEN_FOLDER: usize = 2;
 pub const CMD_AUTOSTART: usize = 3;
 pub const CMD_EXIT: usize = 4;
 pub const CMD_EDIT_VIDEO: usize = 5;
+pub const CMD_HOME: usize = 6;
 
 fn data(hwnd: HWND, icon: HICON) -> NOTIFYICONDATAW {
     let mut nid = NOTIFYICONDATAW {
@@ -45,7 +46,8 @@ pub fn remove(hwnd: HWND) {
 pub fn menu(hwnd: HWND, autostart: bool) -> usize {
     unsafe {
         let Ok(m) = CreatePopupMenu() else { return 0 };
-        let items: [(usize, &str, bool); 4] = [
+        let items: [(usize, &str, bool); 5] = [
+            (CMD_HOME, "Open Snap", false),
             (CMD_CAPTURE, "Capture", false),
             (CMD_EDIT_VIDEO, "Edit a video...", false),
             (CMD_OPEN_FOLDER, "Open captures folder", false),
@@ -56,7 +58,7 @@ pub fn menu(hwnd: HWND, autostart: bool) -> usize {
             let flags = if *checked { MF_STRING | MF_CHECKED } else { MF_STRING };
             let _ = AppendMenuW(m, flags, *id, windows::core::PCWSTR(labels[i].as_ptr()));
         }
-        let _ = SetMenuDefaultItem(m, CMD_CAPTURE as u32, 0);
+        let _ = SetMenuDefaultItem(m, CMD_HOME as u32, 0);
         let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
         let exit = wide("Exit");
         let _ = AppendMenuW(m, MF_STRING, CMD_EXIT, windows::core::PCWSTR(exit.as_ptr()));

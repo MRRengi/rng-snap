@@ -3,6 +3,9 @@
 //! 1:1 to desktop pixels (offset by the desktop origin).
 
 use super::d2d::{self, Gfx, rect_f, rgba};
+use super::editor::handle_dot;
+use super::theme::{self, Backdrop, Blur};
+use windows::core::Interface;
 use super::util::lparam_point;
 use super::{WM_APP_KEY, class_name};
 use crate::geom::{Point, Rect};
@@ -25,8 +28,6 @@ use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-pub const ACCENT: u32 = 0x4C8DFF;
-const PANEL_BG: u32 = 0x1E1E20;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PanelItem {
@@ -115,9 +116,12 @@ const QUICK_SLOTS: [Slot; 18] = [
 #[derive(Clone)]
 struct Fonts {
     ui: IDWriteTextFormat,
+    /// Semibold, for the size pill.
+    label: IDWriteTextFormat,
     small: IDWriteTextFormat,
     mono: IDWriteTextFormat,
     icon: IDWriteTextFormat,
+    chevron: IDWriteTextFormat,
 }
 
 pub struct Overlay {
@@ -150,6 +154,7 @@ pub struct Overlay {
     panel_rect: Rect,
     panel_hover: Option<PanelItem>,
     panel_press: Option<PanelItem>,
+    blur: Blur,
 }
 
 fn monitor_at(p: Point) -> (Rect, f32) {
@@ -207,6 +212,7 @@ impl Overlay {
             panel_rect: Rect::default(),
             panel_hover: None,
             panel_press: None,
+            blur: Blur::default(),
         })
     }
 
@@ -330,7 +336,7 @@ impl Overlay {
         self.panel.clear();
         let Some((_, f)) = &self.fonts else { return };
         let s = self.scale;
-        let h = (40.0 * s).round() as i32;
+        let h = (46.0 * s).round() as i32;
         let pad = (6.0 * s).round() as i32;
         let icon_w = (18.0 * s).round() as i32;
         let gap = (6.0 * s).round() as i32;
@@ -347,7 +353,7 @@ impl Overlay {
         }
         items.push((PanelItem::Folder, drop(&self.folder_label)));
         items.push((PanelItem::Close, square));
-        let sep = (13.0 * s).round() as i32;
+        let sep = (15.0 * s).round() as i32;
         let groups = items.windows(2).filter(|w| w[0].0.group() != w[1].0.group()).count() as i32;
         let total: i32 = pad * 2 + items.iter().map(|w| w.1).sum::<i32>() + sep * groups;
         let left = self.monitor.left + (self.monitor.width() - total) / 2;
@@ -362,6 +368,10 @@ impl Overlay {
             prev = Some(item.group());
             self.panel.push((item, Rect::new(x, top + pad, x + w, top + h - pad)));
             x += w;
+        }
+        super::uimap::clear("panel");
+        for (item, r) in &self.panel {
+            super::uimap::put(&format!("panel.{item:?}"), *r);
         }
     }
 
@@ -578,6 +588,7 @@ impl Overlay {
             fr.bottom - h - gap
         };
         q.strip.translate(x, y);
+        q.strip.publish("quick", |r| r);
         if q.palette.is_some() {
             let mut pal = Strip::new();
             let slots: Vec<Slot> = (0..8).map(|i| Slot::B(Btn::Color(i))).collect();
@@ -828,42 +839,38 @@ impl Overlay {
         }
     }
 
-    unsafe fn draw_quick(&mut self, rt: &ID2D1RenderTarget) {
+    unsafe fn draw_quick(&mut self, rt: &ID2D1RenderTarget, back: Option<&Backdrop>) {
         let Some(st) = self.quick_state() else { return };
         let Some(gfx) = self.gfx.clone() else { return };
         let (vx, vy) = (self.vd.left, self.vd.top);
         let s = self.scale;
+        let p = theme::pal();
         let q = self.quick.as_mut().unwrap();
         // Selection box, handles, text box and caret (image coords = vd-local).
-        if let (Ok(acc), Ok(white)) = (d2d::brush(rt, rgba(ACCENT, 1.0)), d2d::brush(rt, rgba(0xFFFFFF, 1.0))) {
+        if let (Some(acc), Ok(white)) = (theme::brush(rt, p.accent), d2d::brush(rt, rgba(0xFFFFFF, 1.0))) {
             let c = &q.canvas;
             if let Some(it) = c.selected.and_then(|i| c.items.get(i)) {
                 let (l, t, r, b) = bbox(it, c.fonts());
                 unsafe { rt.DrawRectangle(&rect_f(l - 2.0, t - 2.0, r + 2.0, b + 2.0), &acc, 1.0, None) };
                 for (_, hp) in c.handles() {
-                    let hs = 4.5 * s;
-                    let rr = rect_f(hp.x - hs, hp.y - hs, hp.x + hs, hp.y + hs);
-                    unsafe {
-                        rt.FillRectangle(&rr, &white);
-                        rt.DrawRectangle(&rr, &acc, 1.0, None);
-                    }
+                    handle_dot(rt, hp.x, hp.y, s, &white, &acc);
                 }
             }
             if let (Some(t), Some(f)) = (&c.text, c.fonts()) {
                 let (l, tp, r, b) = crate::annot::font::text_box(&f.text, t.size, &t.text, t.at.x, t.at.y);
-                unsafe { rt.DrawRectangle(&rect_f(l - 4.0, tp - 3.0, r + 4.0, b + 3.0), &acc, 1.0, None) };
+                unsafe { rt.DrawRoundedRectangle(&theme::round(rect_f(l - 5.0, tp - 4.0, r + 5.0, b + 4.0), 4.0 * s), &acc, 1.0, None) };
                 let last = t.text.split('\n').last().unwrap_or("");
                 let lines = t.text.split('\n').count().max(1) as f32;
                 let lh = crate::annot::font::line_height(&f.text, t.size);
                 let cx = t.at.x + crate::annot::font::line_width(&f.text, t.size, last);
                 let cy = t.at.y + lh * (lines - 1.0);
-                unsafe { rt.FillRectangle(&rect_f(cx + 1.0, cy + 2.0, cx + 1.0 + 1.5 * s, cy + lh - 2.0), &acc) };
+                unsafe { rt.FillRoundedRectangle(&theme::round(rect_f(cx + 1.0, cy + 2.0, cx + 1.0 + 2.0 * s, cy + lh - 2.0), 1.0 * s), &acc) };
             }
         }
         let off = (-vx as f32, -vy as f32);
-        q.strip.draw(rt, &gfx, &st, off, true);
+        q.strip.draw(rt, &gfx, &st, off, Some(back));
         if let Some(pal) = &mut q.palette {
-            pal.draw(rt, &gfx, &st, off, true);
+            pal.draw(rt, &gfx, &st, off, Some(back));
         }
     }
 
@@ -938,6 +945,7 @@ impl Overlay {
         let Some(fonts) = self.fonts.as_ref().map(|f| f.1.clone()) else { return };
         let fonts = &fonts;
         let s = self.scale;
+        let p = theme::pal();
         let view = sel.view();
         let pos = sel.pos();
         let full = rect_f(0.0, 0.0, self.vd.width() as f32, self.vd.height() as f32);
@@ -946,7 +954,7 @@ impl Overlay {
             rt.BeginDraw();
             rt.DrawBitmap(&bmp, Some(&full), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None);
             let dim = d2d::brush(rt1, rgba(0x000000, 0.45)).ok();
-            let accent = d2d::brush(rt1, rgba(ACCENT, 1.0)).ok();
+            let accent = theme::brush(rt1, p.accent);
             let white = d2d::brush(rt1, rgba(0xFFFFFF, 1.0)).ok();
             if let Some(dim) = &dim {
                 match view.frame {
@@ -986,6 +994,9 @@ impl Overlay {
                     rt.DrawBitmap(b, Some(&d), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None);
                 }
             }
+            // Glass over the frozen screen: the screenshot itself, blurred.
+            let blurred = self.blur.image(rt1, &bmp, 20.0 * s);
+            let back = blurred.as_ref().map(|image| Backdrop { image, origin: (0.0, 0.0), zoom: 1.0 });
             if let (Some(fr), Some(accent)) = (view.frame, &accent) {
                 let f = self.local(fr);
                 let wdt = if view.suggestion { (2.0 * s).round() } else { 1.0_f32.max(s.round()) };
@@ -993,7 +1004,6 @@ impl Overlay {
                 rt.DrawRectangle(&rect_f(f.left + half, f.top + half, f.right - half, f.bottom - half), accent, wdt, None);
                 if view.editing {
                     if let Some(white) = &white {
-                        let hs = (4.0 * s).round();
                         let (cx, cy) = ((f.left + f.right) / 2.0, (f.top + f.bottom) / 2.0);
                         for (x, y) in [
                             (f.left, f.top),
@@ -1005,62 +1015,66 @@ impl Overlay {
                             (cx, f.bottom),
                             (f.right, f.bottom),
                         ] {
-                            let r = rect_f(x - hs, y - hs, x + hs, y + hs);
-                            rt.FillRectangle(&r, white);
-                            rt.DrawRectangle(&r, accent, 1.0, None);
+                            handle_dot(rt1, x, y, s, white, accent);
                         }
                     }
                 }
                 if !view.suggestion {
-                    self.draw_size_label(rt1, fonts, f, fr);
+                    self.draw_size_label(rt1, fonts, f, fr, back.as_ref());
                 }
             }
-            self.draw_panel(rt1, fonts);
-            self.draw_quick(rt1);
+            self.draw_panel(rt1, fonts, back.as_ref());
+            self.draw_quick(rt1, back.as_ref());
             if self.loupe && self.quick.is_none() && !self.panel_rect.contains(pos) {
-                self.draw_loupe(rt1, &bmp, fonts, pos, view.frame);
+                self.draw_loupe(rt1, &bmp, fonts, pos, view.frame, back.as_ref());
             }
             let _ = rt.EndDraw(None, None);
         }
     }
 
-    unsafe fn draw_size_label(&self, rt: &ID2D1RenderTarget, fonts: &Fonts, f: D2D_RECT_F, fr: Rect) {
+    unsafe fn draw_size_label(&self, rt: &ID2D1RenderTarget, fonts: &Fonts, f: D2D_RECT_F, fr: Rect, back: Option<&Backdrop>) {
+        let Some(gfx) = &self.gfx else { return };
         let s = self.scale;
+        let p = theme::pal();
         let text = format!("{} \u{00D7} {}", fr.width(), fr.height());
-        let h = 22.0 * s;
-        let w = (text.chars().count() as f32 * 7.0 + 16.0) * s;
-        let mut top = f.top - h - 6.0 * s;
-        if top < (self.monitor.top - self.vd.top) as f32 {
-            top = f.top + 6.0 * s;
+        let h = 26.0 * s;
+        let w = gfx.measure(&fonts.label, &text) + 22.0 * s;
+        let mut top = f.top - h - 8.0 * s;
+        if top < (self.monitor.top - self.vd.top) as f32 + 4.0 * s {
+            top = f.top + 8.0 * s;
         }
-        let r = rect_f(f.left, top, f.left + w, top + h);
-        if let (Ok(bg), Ok(fg)) = (d2d::brush(rt, rgba(PANEL_BG, 0.92)), d2d::brush(rt, rgba(0xFFFFFF, 1.0))) {
-            unsafe {
-                rt.FillRoundedRectangle(&d2d::round_rect(r, 5.0 * s), &bg);
-            }
-            d2d::draw_text(rt, &fonts.mono, &text, rect_f(r.left + 8.0 * s, r.top + 3.0 * s, r.right, r.bottom), &fg);
+        let left = f.left.max((self.monitor.left - self.vd.left) as f32 + 4.0 * s);
+        let r = rect_f(left, top, left + w, top + h);
+        theme::glass(rt, gfx, r, h / 2.0, s, back);
+        if let Some(fg) = theme::brush(rt, p.label) {
+            d2d::draw_text(rt, &fonts.label, &text, rect_f(r.left + 11.0 * s, r.top + 4.5 * s, r.right, r.bottom), &fg);
         }
     }
 
-    unsafe fn draw_panel(&self, rt: &ID2D1RenderTarget, fonts: &Fonts) {
+    unsafe fn draw_panel(&self, rt: &ID2D1RenderTarget, fonts: &Fonts, back: Option<&Backdrop>) {
+        let Some(gfx) = &self.gfx else { return };
         let s = self.scale;
+        let p = theme::pal();
         let pr = self.local(self.panel_rect);
-        let (Ok(bg), Ok(border), Ok(fg), Ok(dimfg), Ok(sel_bg), Ok(hover_bg), Ok(sep), Ok(on)) = (
-            d2d::brush(rt, rgba(PANEL_BG, 0.97)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.10)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.95)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.40)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.14)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.07)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.12)),
-            d2d::brush(rt, rgba(ACCENT, 1.0)),
+        let (Some(fg), Some(fg2), Some(dimfg), Some(thumb), Some(hover), Some(sep), Some(on), Some(track), Some(hair)) = (
+            theme::brush(rt, p.label),
+            theme::brush(rt, p.label2),
+            theme::brush(rt, p.label3),
+            theme::brush(rt, p.thumb),
+            theme::brush(rt, p.hover),
+            theme::brush(rt, p.separator),
+            theme::brush(rt, p.accent),
+            theme::brush(rt, theme::with_alpha(p.hover, 1.3)),
+            theme::brush(rt, p.hairline),
         ) else {
             return;
         };
-        let radius = 10.0 * s;
-        unsafe {
-            rt.FillRoundedRectangle(&d2d::round_rect(pr, radius), &bg);
-            rt.DrawRoundedRectangle(&d2d::round_rect(rect_f(pr.left + 0.5, pr.top + 0.5, pr.right - 0.5, pr.bottom - 0.5), radius), &border, 1.0, None);
+        theme::glass(rt, gfx, pr, (pr.bottom - pr.top) / 2.0, s, back);
+        // Segmented control track behind Photo / Video.
+        let seg: Vec<D2D_RECT_F> = self.panel.iter().filter(|(i, _)| i.group() == 0).map(|(_, r)| self.local(*r)).collect();
+        if let (Some(a), Some(b)) = (seg.first(), seg.last()) {
+            let t = rect_f(a.left, a.top, b.right, a.bottom);
+            unsafe { rt.FillRoundedRectangle(&theme::round(t, (t.bottom - t.top) / 2.0), &track) };
         }
         let icon_w = 18.0 * s;
         let gap = 6.0 * s;
@@ -1068,9 +1082,9 @@ impl Overlay {
         for (item, r) in &self.panel {
             let lr = self.local(*r);
             if prev.is_some_and(|g| g != item.group()) {
-                let x = lr.left - 6.5 * s;
+                let x = (lr.left - 7.5 * s).round();
                 unsafe {
-                    rt.FillRectangle(&rect_f(x, lr.top + 6.0 * s, x + 1.0, lr.bottom - 6.0 * s), &sep);
+                    rt.FillRectangle(&rect_f(x, lr.top + 8.0 * s, x + 1.0, lr.bottom - 8.0 * s), &sep);
                 }
             }
             prev = Some(item.group());
@@ -1081,12 +1095,17 @@ impl Overlay {
             };
             let pressed = self.panel_press == Some(*item);
             let hovered = self.panel_hover == Some(*item);
-            let rr = d2d::round_rect(lr, 7.0 * s);
+            let radius = (lr.bottom - lr.top) / 2.0;
             unsafe {
-                if selected || pressed {
-                    rt.FillRoundedRectangle(&rr, &sel_bg);
-                } else if hovered {
-                    rt.FillRoundedRectangle(&rr, &hover_bg);
+                if selected {
+                    let thumb_r = theme::inset(lr, 2.0 * s);
+                    theme::shadow(rt, thumb_r, radius, s * 0.35, 0.6);
+                    rt.FillRoundedRectangle(&theme::round(thumb_r, radius - 2.0 * s), &thumb);
+                    if !p.dark {
+                        rt.DrawRoundedRectangle(&theme::round(theme::inset(thumb_r, 0.5), radius - 2.0 * s), &hair, 1.0, None);
+                    }
+                } else if pressed || hovered {
+                    rt.FillRoundedRectangle(&theme::round(if pressed { theme::inset(lr, 1.0 * s) } else { lr }, radius), &hover);
                 }
             }
             match item {
@@ -1098,19 +1117,24 @@ impl Overlay {
                         (_, true) => "\u{E720}",
                         _ => "\u{EC54}",
                     };
+                    if active {
+                        if let Some(tint) = theme::brush(rt, theme::with_alpha(p.accent, 0.18)) {
+                            unsafe { rt.FillRoundedRectangle(&theme::round(lr, radius), &tint) };
+                        }
+                    }
                     d2d::draw_text(rt, &fonts.icon, glyph, lr, if active { &on } else { &dimfg });
                     continue;
                 }
                 PanelItem::Close => {
-                    d2d::draw_text(rt, &fonts.icon, "\u{E711}", lr, &fg);
+                    d2d::draw_text(rt, &fonts.icon, "\u{E711}", lr, &fg2);
                     continue;
                 }
                 PanelItem::Fps | PanelItem::Res => {
                     let label = if *item == PanelItem::Fps { &self.state.fps_label } else { &self.state.res_label };
                     let ty = (lr.top + lr.bottom) / 2.0 - 10.0 * s;
                     d2d::draw_text(rt, &fonts.ui, label, rect_f(lr.left + 12.0 * s, ty, lr.right, ty + 22.0 * s), &fg);
-                    let cx = lr.right - 18.0 * s;
-                    d2d::draw_text(rt, &fonts.small_icon(), "\u{E70D}", rect_f(cx, lr.top, cx + 12.0 * s, lr.bottom), &fg);
+                    let cx = lr.right - 19.0 * s;
+                    d2d::draw_text(rt, &fonts.chevron, "\u{E70D}", rect_f(cx, lr.top, cx + 12.0 * s, lr.bottom), &fg2);
                     continue;
                 }
                 _ => {}
@@ -1120,35 +1144,43 @@ impl Overlay {
                 PanelItem::Video => ("\u{E714}", "Video"),
                 _ => ("\u{E8B7}", self.folder_label.as_str()),
             };
+            let ink = if matches!(item, PanelItem::Photo | PanelItem::Video) && !selected { &fg2 } else { &fg };
             let x0 = lr.left + 12.0 * s;
-            d2d::draw_text(rt, &fonts.icon, glyph, rect_f(x0, lr.top, x0 + icon_w, lr.bottom), &fg);
+            d2d::draw_text(rt, &fonts.icon, glyph, rect_f(x0, lr.top, x0 + icon_w, lr.bottom), ink);
             let tx = x0 + icon_w + gap;
             let ty = (lr.top + lr.bottom) / 2.0 - 10.0 * s;
-            d2d::draw_text(rt, &fonts.ui, label, rect_f(tx, ty, lr.right, ty + 22.0 * s), &fg);
+            d2d::draw_text(rt, &fonts.ui, label, rect_f(tx, ty, lr.right, ty + 22.0 * s), ink);
             if *item == PanelItem::Folder {
-                let cx = lr.right - 18.0 * s;
-                d2d::draw_text(rt, &fonts.small_icon(), "\u{E70D}", rect_f(cx, lr.top, cx + 12.0 * s, lr.bottom), &fg);
+                let cx = lr.right - 19.0 * s;
+                d2d::draw_text(rt, &fonts.chevron, "\u{E70D}", rect_f(cx, lr.top, cx + 12.0 * s, lr.bottom), &fg2);
             }
         }
     }
 
-    unsafe fn draw_loupe(&self, rt: &ID2D1RenderTarget, bmp: &ID2D1Bitmap, fonts: &Fonts, pos: Point, frame: Option<Rect>) {
+    unsafe fn draw_loupe(&self, rt: &ID2D1RenderTarget, bmp: &ID2D1Bitmap, fonts: &Fonts, pos: Point, frame: Option<Rect>, back: Option<&Backdrop>) {
+        let Some(gfx) = &self.gfx else { return };
         let s = self.scale;
+        let p = theme::pal();
         const CELLS: i32 = 17;
         let zoom = (8.0 * s).round();
         let box_px = CELLS as f32 * zoom;
-        let info_h = 90.0 * s;
-        let off = 22.0 * s;
+        let pad = 6.0 * s;
+        let info_h = 92.0 * s;
+        let off = 24.0 * s;
         let cursor = Point::new(pos.x - self.vd.left, pos.y - self.vd.top);
         let mon = self.local(self.monitor);
+        let card_w = box_px + pad * 2.0;
+        let card_h = box_px + pad + info_h;
         let mut x = cursor.x as f32 + off;
         let mut y = cursor.y as f32 + off;
-        if x + box_px > mon.right {
-            x = cursor.x as f32 - off - box_px;
+        if x + card_w > mon.right {
+            x = cursor.x as f32 - off - card_w;
         }
-        if y + box_px + info_h > mon.bottom {
-            y = cursor.y as f32 - off - box_px - info_h;
+        if y + card_h > mon.bottom {
+            y = cursor.y as f32 - off - card_h;
         }
+        let card = rect_f(x, y, x + card_w, y + card_h);
+        theme::glass(rt, gfx, card, 16.0 * s, s, back);
         let half = CELLS / 2;
         let src = rect_f(
             (cursor.x - half) as f32,
@@ -1156,66 +1188,78 @@ impl Overlay {
             (cursor.x + half + 1) as f32,
             (cursor.y + half + 1) as f32,
         );
-        let dst = rect_f(x, y, x + box_px, y + box_px);
-        let (Ok(bg), Ok(border), Ok(fg), Ok(sub), Ok(white), Ok(black)) = (
-            d2d::brush(rt, rgba(PANEL_BG, 0.96)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.25)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.95)),
-            d2d::brush(rt, rgba(0xFFFFFF, 0.6)),
+        let dst = rect_f(x + pad, y + pad, x + pad + box_px, y + pad + box_px);
+        let (Some(fg), Some(sub), Some(hint), Ok(white), Ok(black), Some(hair)) = (
+            theme::brush(rt, p.label),
+            theme::brush(rt, p.label2),
+            theme::brush(rt, p.label3),
             d2d::brush(rt, rgba(0xFFFFFF, 1.0)),
             d2d::brush(rt, rgba(0x000000, 1.0)),
+            theme::brush(rt, p.hairline),
         ) else {
             return;
         };
-        let card = rect_f(dst.left, dst.top, dst.right, dst.bottom + info_h);
+        let radius = 11.0 * s;
         unsafe {
-            rt.FillRoundedRectangle(&d2d::round_rect(card, 8.0 * s), &bg);
-            rt.PushAxisAlignedClip(&dst, D2D1_ANTIALIAS_MODE_ALIASED);
+            // Magnified pixels inside a rounded window.
+            let clip = theme::round(dst, radius);
+            let layered = match (rt.cast::<ID2D1DeviceContext>(), gfx.d2d.CreateRoundedRectangleGeometry(&clip)) {
+                (Ok(dc), Ok(geo)) => {
+                    let params = D2D1_LAYER_PARAMETERS1 {
+                        contentBounds: dst,
+                        geometricMask: std::mem::ManuallyDrop::new(geo.cast::<ID2D1Geometry>().ok()),
+                        maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                        maskTransform: windows_numerics::Matrix3x2::identity(),
+                        opacity: 1.0,
+                        opacityBrush: std::mem::ManuallyDrop::new(None),
+                        layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+                    };
+                    dc.PushLayer(&params, None);
+                    let _ = std::mem::ManuallyDrop::into_inner(params.geometricMask);
+                    Some(dc)
+                }
+                _ => {
+                    rt.PushAxisAlignedClip(&dst, D2D1_ANTIALIAS_MODE_ALIASED);
+                    None
+                }
+            };
             rt.FillRectangle(&dst, &black);
             rt.DrawBitmap(bmp, Some(&dst), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, Some(&src));
-            let c0 = rect_f(x + half as f32 * zoom, y + half as f32 * zoom, x + (half + 1) as f32 * zoom, y + (half + 1) as f32 * zoom);
+            let c0 = rect_f(dst.left + half as f32 * zoom, dst.top + half as f32 * zoom, dst.left + (half + 1) as f32 * zoom, dst.top + (half + 1) as f32 * zoom);
             rt.DrawRectangle(&rect_f(c0.left - 1.0, c0.top - 1.0, c0.right + 1.0, c0.bottom + 1.0), &black, 1.0, None);
             rt.DrawRectangle(&c0, &white, 1.0, None);
-            rt.PopAxisAlignedClip();
-            rt.DrawRoundedRectangle(&d2d::round_rect(card, 8.0 * s), &border, 1.0, None);
-            if let Ok(outline) = d2d::brush(rt, rgba(0x000000, 0.55)) {
-                let o = rect_f(card.left - 1.0, card.top - 1.0, card.right + 1.0, card.bottom + 1.0);
-                rt.DrawRoundedRectangle(&d2d::round_rect(o, 9.0 * s), &outline, 1.0, None);
+            match layered {
+                Some(dc) => dc.PopLayer(),
+                None => rt.PopAxisAlignedClip(),
             }
+            rt.DrawRoundedRectangle(&theme::round(dst, radius), &hair, 1.0, None);
         }
-        let tx = dst.left + 10.0 * s;
-        let mut ty = dst.bottom + 6.0 * s;
-        let line = 16.0 * s;
+        let tx = dst.left + 6.0 * s;
+        let mut ty = dst.bottom + 8.0 * s;
+        let line = 17.0 * s;
         d2d::draw_text(rt, &fonts.mono, &format!("{}, {}", pos.x, pos.y), rect_f(tx, ty, dst.right, ty + line), &sub);
-        ty += line;
         if let Some(fr) = frame {
-            d2d::draw_text(rt, &fonts.mono, &format!("{} \u{00D7} {}", fr.width(), fr.height()), rect_f(tx, ty, dst.right, ty + line), &sub);
+            let t = format!("{} \u{00D7} {}", fr.width(), fr.height());
+            let w = gfx.measure(&fonts.mono, &t);
+            d2d::draw_text(rt, &fonts.mono, &t, rect_f(dst.right - w - 4.0 * s, ty, dst.right, ty + line), &sub);
         }
-        ty += line;
+        ty += line + 2.0 * s;
         if let Some(px) = self.frame.as_ref().and_then(|f| f.pixel(pos.x, pos.y)) {
             let hex = hex_color(px);
-            let sw = 11.0 * s;
+            let sw = 14.0 * s;
             let col = (px[2] as u32) << 16 | (px[1] as u32) << 8 | px[0] as u32;
             if let Ok(b) = d2d::brush(rt, rgba(col, 1.0)) {
-                let r = rect_f(tx, ty + 2.0 * s, tx + sw, ty + 2.0 * s + sw);
+                let r = rect_f(tx, ty + 1.5 * s, tx + sw, ty + 1.5 * s + sw);
                 unsafe {
-                    rt.FillRectangle(&r, &b);
-                    rt.DrawRectangle(&r, &border, 1.0, None);
+                    rt.FillRoundedRectangle(&theme::round(r, 4.0 * s), &b);
+                    rt.DrawRoundedRectangle(&theme::round(r, 4.0 * s), &hair, 1.0, None);
                 }
             }
-            d2d::draw_text(rt, &fonts.mono, &hex, rect_f(tx + sw + 6.0 * s, ty, dst.right, ty + line), &fg);
+            d2d::draw_text(rt, &fonts.mono, &hex, rect_f(tx + sw + 8.0 * s, ty, dst.right, ty + line), &fg);
         }
-        ty += line;
-        if let Ok(hint) = d2d::brush(rt, rgba(0xFFFFFF, 0.38)) {
-            d2d::draw_text(rt, &fonts.small, "Wheel  bigger / smaller", rect_f(tx, ty, dst.right, ty + line), &hint);
-            d2d::draw_text(rt, &fonts.small, "C  copy color", rect_f(tx, ty + line, dst.right, ty + 2.0 * line), &hint);
-        }
-    }
-}
-
-impl Fonts {
-    fn small_icon(&self) -> IDWriteTextFormat {
-        self.icon.clone()
+        ty += line + 4.0 * s;
+        d2d::draw_text(rt, &fonts.small, "Wheel  bigger / smaller", rect_f(tx, ty, dst.right, ty + line), &hint);
+        d2d::draw_text(rt, &fonts.small, "C  copy color", rect_f(tx, ty + line, dst.right, ty + 2.0 * line), &hint);
     }
 }
 
@@ -1223,9 +1267,11 @@ fn make_fonts(gfx: &Gfx, s: f32) -> Option<Fonts> {
     let mono = gfx.text_format(&windows::core::HSTRING::from("Consolas"), 12.5 * s, false).ok()?;
     Some(Fonts {
         ui: gfx.ui_font(14.0 * s, false).ok()?,
+        label: gfx.ui_font(12.5 * s, true).ok()?,
         small: gfx.ui_font(12.0 * s, false).ok()?,
         mono,
         icon: gfx.icon_font(15.0 * s).ok()?,
+        chevron: gfx.icon_font(10.0 * s).ok()?,
     })
 }
 
