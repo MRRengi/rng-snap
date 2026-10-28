@@ -8,12 +8,15 @@
 
 - **Block 4 - Editor**: quick marks on the overlay (Ctrl while releasing the frame), full editor window from the card's Edit button. Tools: select, arrow, line, rectangle, ellipse, pen, marker, text, blur/pixelate, numbered steps, crop (editor). 8 colours + custom, 3 widths, undo/redo, zoom/pan, auto-copy after every change, last tool/colour remembered. Snagit-style rendering (shadows, outlined text). Checked end-to-end on the Windows CI desktop. Spec: `docs/specs/4-editor.md`
 
-- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps) on GitHub Releases.
+- **Block 5 - Video editor**: Edit on the video card / "Edit a video..." in the tray / `--edit file`. Timeline with thumbnails + waveform: split (S), delete, trim by dragging edges, reorder by dragging pieces. All editor tools on the video with on-screen time as bars you move and stretch, camera zooms (Z) that glide in and out, undo/redo, preview with sound. Export to `<name> edit.mp4` (hardware H.264/HEVC, audio cut with soft joins) + clipboard, GIF. Checked end-to-end on the Windows CI desktop with a synthetic clip (cut, reorder, text, zoom verified frame by frame). Spec: `docs/specs/5-video-editor.md`
+
+- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor) on GitHub Releases.
 - **Demo video** for LinkedIn/X (16:9 + 1:1, 47 s) filmed on the Windows CI desktop (`demo` branch, `demo/edit.py` edits it), posts written. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
 
 **WE ARE HERE**
-- Maks checks block 4 (editor + quick marks) on his PC and posts the demo on LinkedIn and X.
+- Maks checks block 5 (video editor) on his PC: cutting a recording, a reel of a few moments, text and zoom on top, export.
+- Preview sound can only be checked on his PC (the CI runner has no speakers).
 - Still open from block 3: 120/144 fps on his monitor, system sound + mic (CI has no audio devices), whether the yellow capture border shows.
 
 **Ahead**
-- **Block 5 - Release**: installer, exe icon, README with GIFs, GitHub Releases, winget.
+- **Block 6 - Release polish**: installer, exe icon, "Open with" for videos, winget.

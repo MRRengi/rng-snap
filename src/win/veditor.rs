@@ -51,7 +51,7 @@ pub enum Event {
     Exported(PathBuf),
 }
 
-pub const VSLOTS: [Slot; 32] = [
+pub const VSLOTS: [Slot; 30] = [
     Slot::B(Btn::Tool(Tool::Select)),
     Slot::B(Btn::Tool(Tool::Arrow)),
     Slot::B(Btn::Tool(Tool::Line)),
@@ -74,9 +74,7 @@ pub const VSLOTS: [Slot; 32] = [
     Slot::B(Btn::Color(7)),
     Slot::B(Btn::Custom),
     Slot::Sep,
-    Slot::B(Btn::Width(0)),
-    Slot::B(Btn::Width(1)),
-    Slot::B(Btn::Width(2)),
+    Slot::B(Btn::WidthCycle),
     Slot::B(Btn::BlurMode),
     Slot::Sep,
     Slot::B(Btn::Undo),
@@ -528,6 +526,10 @@ impl VEditor {
             Btn::Custom => return Some(Event::CustomColor),
             Btn::Width(i) => {
                 let c = self.canvas.set_width(i);
+                self.apply(c);
+            }
+            Btn::WidthCycle => {
+                let c = self.canvas.set_width((self.canvas.width_idx + 1) % 3);
                 self.apply(c);
             }
             Btn::BlurMode => {
@@ -1195,10 +1197,13 @@ impl VEditor {
             d2d::draw_text(rt, &icon, if playing { "\u{E769}" } else { "\u{E768}" }, l.play, &fg);
             let time = format!("{} / {}", vedit::clock(self.playhead), vedit::clock(self.timeline.total()));
             d2d::draw_text(rt, &label, &time, rect_f(l.play.right + 12.0 * s, l.play.top + 5.0 * s, l.play.right + 220.0 * s, l.play.bottom), &fg);
-            for (r, text) in [(l.split, "\u{E8C6}  Split  S"), (l.delete, "\u{E74D}  Delete")] {
+            for (r, glyph, text) in [(l.split, "\u{E8C6}", "Split  S"), (l.delete, "\u{E74D}", "Delete")] {
                 rt.FillRoundedRectangle(&d2d::round_rect(r, 6.0 * s), &btn);
-                let w = gfx.measure(&label, text);
-                d2d::draw_text(rt, &label, text, rect_f(r.left + ((r.right - r.left) - w) / 2.0, r.top + 5.0 * s, r.right, r.bottom), &fg);
+                let gw = 22.0 * s;
+                let w = gw + gfx.measure(&label, text);
+                let x = r.left + ((r.right - r.left) - w) / 2.0;
+                d2d::draw_text(rt, &icon, glyph, rect_f(x, r.top, x + gw - 4.0 * s, r.bottom), &fg);
+                d2d::draw_text(rt, &label, text, rect_f(x + gw, r.top + 5.0 * s, r.right, r.bottom), &fg);
             }
             if !self.status.is_empty() {
                 let w = gfx.measure(&label, &self.status);

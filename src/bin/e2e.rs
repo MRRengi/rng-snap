@@ -1537,7 +1537,9 @@ mod e2e {
                 if opened {
                     let ed = find(w!("RengiSnapVideoEditor")).unwrap();
                     unsafe {
-                        let _ = SetWindowPos(ed, Some(HWND_TOP), 10, 10, 1004, 740, SWP_SHOWWINDOW);
+                        let mut wa = RECT::default();
+                        let _ = SystemParametersInfoW(SPI_GETWORKAREA, 0, Some(&mut wa as *mut RECT as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+                        let _ = SetWindowPos(ed, Some(HWND_TOP), wa.left, wa.top, wa.right - wa.left, wa.bottom - wa.top, SWP_SHOWWINDOW);
                         let _ = SetForegroundWindow(ed);
                     }
                     sleep(2500);

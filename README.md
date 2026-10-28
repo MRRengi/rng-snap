@@ -23,6 +23,14 @@ Free, open-source screenshot and screen recording tool for Windows. One small na
 - System sound and microphone, pause, discard; the control bar never appears in the video
 - MP4 saved to your folder; Copy puts the file on the clipboard for Telegram / Discord; one-click GIF export
 
+## Video editor
+- **Edit** on the video card, **Edit a video...** in the tray menu, or `RengiSnap.exe --edit file.mp4`
+- Cut out pieces (**S** splits at the playhead, **Delete** removes the selected piece, drag an edge to trim), or split out several moments and drag them into a new order
+- Text, arrows, boxes, blur, numbered steps and the other editor tools right on the video; each one is a bar on the timeline you can move and stretch
+- **Zoom (Z)**: draw an area, the camera glides in and back out
+- Thumbnails and the sound wave on the timeline; the preview plays with sound; undo / redo for clips and marks together
+- **Export (Ctrl+E)** writes `<name> edit.mp4` next to the original and puts it on the clipboard; **GIF** makes a GIF of the result
+
 ## Keys
 | Where | Keys |
 |---|---|
@@ -31,6 +39,7 @@ Free, open-source screenshot and screen recording tool for Windows. One small na
 | Marks and editor | **V** select · **A** arrow · **L** line · **R** rectangle · **E** ellipse · **P** pen · **H** marker · **T** text · **B** blur · **N** step · **C** crop (editor) · **Shift** snap to 45° / square |
 | Editor | **Ctrl+Z / Ctrl+Y** undo / redo · **Ctrl+C** copy · **Ctrl+S** save · **Ctrl+wheel** zoom · **Ctrl+0** fit · **Ctrl+1** 100% · **Space**+drag pan |
 | Quick marks | **Enter** finish and copy |
+| Video editor | **Space** play / pause · **S** split · **Delete** remove piece or mark · **Z** zoom · **←/→** frame step (**Shift** 1 s) · **Home/End** · **Ctrl+E** export · **Ctrl+Z / Ctrl+Y** undo / redo |
 
 ## Notes
 - Windows 10 2004+; Windows 11 recommended

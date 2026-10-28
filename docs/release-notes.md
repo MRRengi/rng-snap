@@ -19,6 +19,14 @@ Free, open-source screenshot and screen recording tool for Windows. One small ex
 - System sound and microphone, pause, discard; the control bar never shows up in the video
 - MP4 saved straight to your folder, one-click GIF export
 
+**Video editor** (new: Edit on the video card, "Edit a video..." in the tray, or `RengiSnap.exe --edit file.mp4`)
+- Cut out what you don't need: S splits at the playhead, Delete removes a piece, drag a piece's edge to trim it
+- Make a reel: split out the moments you want and drag them into any order
+- Text, arrows, boxes, blur, numbered steps and the other editor tools right on the video, each for as long as you like (drag its bar on the timeline)
+- Zoom (Z): draw an area and the camera glides in and back out
+- Timeline with thumbnails and the sound wave; preview plays with sound; undo / redo for everything
+- Export (Ctrl+E) writes "<name> edit.mp4" next to the original and puts it on the clipboard; GIF button too
+
 **Run it:** download `RengiSnap.exe` and start it. Windows SmartScreen may warn because the exe is not signed: More info > Run anyway. The app lives in the tray and starts with Windows (untick it in the tray menu).
 
 Requires Windows 10 2004 or later, Windows 11 recommended.
