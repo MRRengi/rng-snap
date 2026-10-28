@@ -15,6 +15,7 @@ mod record;
 mod toolstrip;
 mod tray;
 mod util;
+mod vaudio;
 mod vexport;
 mod veditor;
 mod vplayer;

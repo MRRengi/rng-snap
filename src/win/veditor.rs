@@ -9,6 +9,7 @@ use super::mp4read::Reader;
 use super::overlay::ACCENT;
 use super::toolstrip::{Btn, Slot, Strip, StripState};
 use super::util::{lparam_point, log};
+use super::vaudio::AudioPlay;
 use super::vexport::{self, Job, Progress};
 use super::vplayer::{Cmd, PEAK_MS, Player, Strips, View, make_strips};
 use crate::annot::edit::{Canvas, Change, Key};
@@ -165,6 +166,8 @@ pub struct VEditor {
     last_cursor: Point,
     view_size: (u32, u32),
     min_w: i32,
+    /// Preview sound while playing.
+    audio: Option<AudioPlay>,
 }
 
 fn dpi_scale(h: HWND) -> f32 {
@@ -252,6 +255,7 @@ impl VEditor {
             last_cursor: Point::default(),
             view_size: (0, 0),
             min_w: 0,
+            audio: None,
         };
         ed.strip.layout(gfx, &VSLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
         ed.min_w = ed.strip.rect.width() + (16.0 * scale) as i32;
@@ -403,14 +407,17 @@ impl VEditor {
         if self.player.playing() {
             self.player.send(Cmd::Pause);
         }
+        self.audio = None;
     }
 
     fn toggle_play(&mut self) {
         if self.player.playing() {
             self.player.send(Cmd::Pause);
+            self.audio = None;
         } else {
             let _ = self.canvas.finish_text();
             let from = if self.playhead + 50 >= self.total() { 0 } else { self.playhead };
+            self.audio = Some(AudioPlay::start(self.src.clone(), self.timeline.clone(), from));
             self.player.send(Cmd::Play(from));
             self.player.shared.playing.store(true, Ordering::Release);
         }
@@ -767,6 +774,8 @@ impl VEditor {
                 if self.player.playing() {
                     self.playhead = self.player.shared.t.load(Ordering::Acquire);
                     self.canvas.set_time(self.playhead);
+                } else {
+                    self.audio = None;
                 }
                 self.invalidate();
                 (Some(LRESULT(0)), None)
