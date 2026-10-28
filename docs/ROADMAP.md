@@ -10,13 +10,30 @@
 
 - **Block 5 - Video editor**: Edit on the video card / "Edit a video..." in the tray / `--edit file`. Timeline with thumbnails + waveform: split (S), delete, trim by dragging edges, reorder by dragging pieces. All editor tools on the video with on-screen time as bars you move and stretch, camera zooms (Z) that glide in and out, undo/redo, preview with sound. Export to `<name> edit.mp4` (hardware H.264/HEVC, audio cut with soft joins) + clipboard, GIF. Checked end-to-end on the Windows CI desktop with a synthetic clip (cut, reorder, text, zoom verified frame by frame). Spec: `docs/specs/5-video-editor.md`
 
-- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor) on GitHub Releases.
+- **Block 6 - Setup and Liquid Glass redesign**:
+  - **Setup** `RengiSnap-Setup-0.6.0.exe`: no admin prompt, Start menu, autostart, "Open with Snap" for mp4/png, clean uninstall. Plus a **portable zip**. The exe now has an icon and the name "Snap by rng".
+  - **Home window** on launch and from the tray icon: Screenshot / Record video / Edit a video tiles with their keys, recent captures (a click opens the editor), and settings (shortcut, folder, start with Windows).
+  - **Whole UI in Liquid Glass**: floating glass toolbars with a real blur of what's underneath, a glass panel, loupe, card and recording bar, capsule buttons, Apple colours, a new icon.
+  - **Light and dark** follow Windows, switching live.
+  - Checked on CI: e2e in both themes, plus a real silent install and uninstall.
+  - Spec: `docs/specs/6-setup-and-redesign.md`
+
+- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor), v0.6.0 (+ setup, Home, redesign) on GitHub Releases.
 - **Demo video** for LinkedIn/X (16:9 + 1:1, 47 s) filmed on the Windows CI desktop (`demo` branch, `demo/edit.py` edits it), posts written. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
 
 **WE ARE HERE**
-- Maks checks block 5 (video editor) on his PC: cutting a recording, a reel of a few moments, text and zoom on top, export.
-- Preview sound can only be checked on his PC (the CI runner has no speakers).
-- Still open from block 3: 120/144 fps on his monitor, system sound + mic (CI has no audio devices), whether the yellow capture border shows.
+- Maks installs v0.6.0 from the setup and checks:
+  - Home.
+  - The glass look in his theme, and switching the Windows theme.
+  - "Open with Snap".
+  - The video editor from block 5, including preview sound (CI has no speakers).
+- Still open from block 3:
+  - 120/144 fps on his monitor.
+  - System sound and mic (CI has no audio devices).
+  - Whether the yellow capture border shows.
 
 **Ahead**
-- **Block 6 - Release polish**: installer, exe icon, "Open with" for videos, winget.
+- **Block 7 - Distribution**:
+  - winget package.
+  - Code signing, so SmartScreen stops warning.
+  - Auto-update check on Home.
