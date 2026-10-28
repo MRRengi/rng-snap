@@ -186,7 +186,7 @@ pub fn frame_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESUL
     }
 }
 
-const STYLE: WINDOW_STYLE = WINDOW_STYLE(WS_OVERLAPPED.0 | WS_CAPTION.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0);
+const STYLE: WINDOW_STYLE = WINDOW_STYLE(WS_OVERLAPPED.0 | WS_CAPTION.0 | WS_SYSMENU.0);
 
 impl Home {
     pub fn create(instance: HINSTANCE) -> windows::core::Result<Home> {
@@ -404,13 +404,14 @@ impl Home {
         let cgap = 12.0 * s;
         let cell_w = (cw - pad * 2.0 - cgap * (cols - 1) as f32) / cols as f32;
         let text_h = 36.0 * s;
-        let mut thumb_h = cell_w * 0.62;
         let avail = (grid_bottom - grid_top).max(0.0);
-        let mut rows = if avail >= (thumb_h + text_h) * 2.0 + cgap { 2 } else { 1 };
-        if rows == 1 && avail < thumb_h + text_h {
+        let min_thumb = cell_w * 0.56;
+        let mut rows = if avail >= (min_thumb + text_h) * 2.0 + cgap && self.recent.len() > cols { 2 } else { 1 };
+        // Thumbnails grow into the room there is (up to 4:3), so the grid
+        // never leaves a hole above the settings.
+        let mut thumb_h = ((avail - cgap * (rows - 1) as f32) / rows as f32 - text_h).min(cell_w * 0.75);
+        if thumb_h < 40.0 * s {
             thumb_h = (avail - text_h).max(40.0 * s);
-        }
-        if self.recent.len() <= cols {
             rows = 1;
         }
         l.thumb_h = thumb_h;

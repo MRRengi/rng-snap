@@ -116,13 +116,17 @@ pub fn run() {
             unsafe {
                 match &want_edit {
                     _ if want_quit => {
+                        // Wait until the process is really gone, so an installer can replace the exe.
+                        let mut pid = 0u32;
+                        GetWindowThreadProcessId(other, Some(&mut pid));
+                        let proc_ = windows::Win32::System::Threading::OpenProcess(windows::Win32::System::Threading::PROCESS_SYNCHRONIZE, false, pid);
                         let _ = PostMessageW(Some(other), WM_CLOSE, WPARAM(0), LPARAM(0));
-                        // Wait until it is really gone, so an installer can replace the exe.
-                        for _ in 0..50 {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            if FindWindowW(class_name::MSG, None).is_err() {
-                                break;
+                        match proc_ {
+                            Ok(h) => {
+                                windows::Win32::System::Threading::WaitForSingleObject(h, 8000);
+                                let _ = CloseHandle(h);
                             }
+                            Err(_) => std::thread::sleep(std::time::Duration::from_millis(1500)),
                         }
                     }
                     Some(p) => {
@@ -400,7 +404,7 @@ impl App {
             Ok(mut e) => {
                 if let Some(p) = &last_saved(&self.last) {
                     e.saved_path = Some(p.clone());
-                    e.set_title(&format!("{} - Rengi Snap", file_name(p)));
+                    e.set_title(&format!("{} - Snap", file_name(p)));
                 }
                 self.editor = Some(e);
             }
@@ -438,7 +442,7 @@ impl App {
         match result {
             Ok(p) => {
                 e.set_status(format!("Saved {}", file_name(&p)));
-                e.set_title(&format!("{} - Rengi Snap", file_name(&p)));
+                e.set_title(&format!("{} - Snap", file_name(&p)));
                 e.saved_path = Some(p.clone());
                 if let Some(last) = &mut self.last {
                     last.saved = Some(p);

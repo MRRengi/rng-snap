@@ -118,7 +118,7 @@ impl Editor {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 class_name::EDITOR,
-                windows::core::w!("Rengi Snap - Editor"),
+                windows::core::w!("Editor - Snap"),
                 WS_OVERLAPPEDWINDOW,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -165,7 +165,7 @@ impl Editor {
         };
         ed.strip.animate = true;
         ed.strip.layout(gfx, &SLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
-        ed.min_w = ed.strip.rect.width() + (ed.margin() * 2.0) as i32;
+        ed.min_w = (ed.strip.rect.width() as f32 * 0.75) as i32 + (ed.margin() * 2.0) as i32;
         // Size: image + chrome, at most 85% of the work area, centred on the capture's monitor.
         unsafe {
             let m = MonitorFromPoint(POINT { x: near.left + near.width() / 2, y: near.top + near.height() / 2 }, MONITOR_DEFAULTTONEAREST);
@@ -217,9 +217,7 @@ impl Editor {
     /// Lays the toolbar out at its natural width, centred at the top.
     fn place_strip(&mut self, gfx: &Gfx, cw: i32) {
         let m = self.margin().round() as i32;
-        self.strip.layout(gfx, &SLOTS, Point::new(0, m), self.bar_h(), 0, self.scale);
-        let x = ((cw - self.strip.rect.width()) / 2).max(m);
-        self.strip.translate(x, 0);
+        self.strip.layout_fit(gfx, &SLOTS, m, m, self.bar_h(), cw - m * 2, self.scale);
         let mut o = POINT::default();
         unsafe {
             let _ = ClientToScreen(self.hwnd, &mut o);

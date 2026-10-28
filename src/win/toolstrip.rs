@@ -101,7 +101,7 @@ pub struct Strip {
     pub hover: Option<Btn>,
     pub press: Option<Btn>,
     scale: f32,
-    icons: Vec<(Tool, ID2D1Bitmap)>,
+    icons: Vec<(Tool, u32, ID2D1Bitmap)>,
     icon_rt: usize,
     fonts: Option<(f32, Fonts)>,
     fader: Fader,
@@ -223,6 +223,19 @@ impl Strip {
         self.rect = Rect::new(origin.x, origin.y, (x + side).max(origin.x + min_w), origin.y + height);
     }
 
+    /// Lays out at `scale`, shrinking (down to 75%) when the natural width
+    /// doesn't fit `max_w`, then centres the row in `max_w` starting at `x0`.
+    pub fn layout_fit(&mut self, gfx: &Gfx, slots: &[Slot], x0: i32, y: i32, height: i32, max_w: i32, scale: f32) {
+        self.layout(gfx, slots, Point::new(0, y), height, 0, scale);
+        let w = self.rect.width();
+        if w > max_w && w > 0 {
+            let k = (max_w as f32 / w as f32).max(0.75);
+            self.layout(gfx, slots, Point::new(0, y), (height as f32 * k).round() as i32, 0, scale * k);
+        }
+        let x = x0 + ((max_w - self.rect.width()) / 2).max(0);
+        self.translate(x, 0);
+    }
+
     pub fn hit(&self, p: Point) -> Option<Btn> {
         self.items.iter().find(|(_, r)| r.contains(p)).map(|(b, _)| *b)
     }
@@ -250,12 +263,13 @@ impl Strip {
             self.icons.clear();
             self.icon_rt = key;
         }
-        if let Some((_, b)) = self.icons.iter().find(|(x, _)| *x == t) {
+        let n = (20.0 * self.scale).round().max(12.0) as u32;
+        if let Some((_, _, b)) = self.icons.iter().find(|(x, sz, _)| *x == t && *sz == n) {
             return Some(b.clone());
         }
-        let n = (20.0 * self.scale).round().max(12.0) as u32;
         let b = d2d::bitmap_from_pixmap(rt, &icons::tool_icon(t, n)).ok()?;
-        self.icons.push((t, b.clone()));
+        self.icons.retain(|(x, _, _)| *x != t);
+        self.icons.push((t, n, b.clone()));
         Some(b)
     }
 

@@ -188,7 +188,7 @@ impl VEditor {
         if duration_ms < 200 {
             return Err("this video is too short to edit".into());
         }
-        let title = super::util::wide(&format!("{} - Rengi Snap video editor", src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+        let title = super::util::wide(&format!("{} - Snap video editor", src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
         let hwnd = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -260,7 +260,7 @@ impl VEditor {
         };
         ed.strip.animate = true;
         ed.strip.layout(gfx, &VSLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
-        ed.min_w = ed.strip.rect.width() + (20.0 * scale) as i32;
+        ed.min_w = (ed.strip.rect.width() as f32 * 0.75) as i32 + (20.0 * scale) as i32;
         unsafe {
             let mut p = POINT::default();
             let _ = GetCursorPos(&mut p);
@@ -665,9 +665,7 @@ impl VEditor {
             _ => {}
         }
         let mi = self.margin().round() as i32;
-        self.strip.layout(gfx, &VSLOTS, Point::new(0, mi), self.bar_h(), 0, self.scale);
-        let x = ((w as i32 - self.strip.rect.width()) / 2).max(mi);
-        self.strip.translate(x, 0);
+        self.strip.layout_fit(gfx, &VSLOTS, mi, mi, self.bar_h(), w as i32 - mi * 2, self.scale);
         let mut o = POINT::default();
         unsafe {
             let _ = ClientToScreen(self.hwnd, &mut o);
