@@ -100,6 +100,9 @@ begin
     Exec(Old, '--quit', '', SW_HIDE, ewWaitUntilTerminated, Code);
     Sleep(800);
   end;
+  // Any other copy (an older download, a portable copy) would keep the new
+  // one from starting: Snap allows one copy at a time.
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM RengiSnap.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Result := '';
 end;
 

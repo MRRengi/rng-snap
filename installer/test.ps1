@@ -47,8 +47,17 @@ $bmp.Save("$out\installed-icon.png")
 # The installed app starts like a user would start it (Home opens).
 $env:RENGI_SNAP_HOME = (Resolve-Path $out).Path + "\inst-home"
 New-Item -ItemType Directory -Force $env:RENGI_SNAP_HOME | Out-Null
+# An older copy from elsewhere is already running in the tray (like a
+# download from before): the installed app must replace it, not hand over to it.
+$old = "$out\old-copy"
+New-Item -ItemType Directory -Force $old | Out-Null
+Copy-Item target\release\RengiSnap.exe "$old\RengiSnap.exe"
+Start-Process "$old\RengiSnap.exe" -ArgumentList '--background'
+WaitFor { $null -ne (Get-Process RengiSnap -ErrorAction SilentlyContinue) } 10 | Out-Null
+Start-Sleep 1
 Start-Process $exe
-Check "installed app runs" (WaitFor { $null -ne (Get-Process RengiSnap -ErrorAction SilentlyContinue) } 10)
+Check "installed app runs" (WaitFor { $null -ne (Get-Process RengiSnap -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }) } 10)
+Check "installed app replaced the older copy" (WaitFor { $null -eq (Get-Process RengiSnap -ErrorAction SilentlyContinue | Where-Object { $_.Path -ne $exe }) } 10) ((Get-Process RengiSnap -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }) -join ', ')
 Start-Sleep 2
 $runAfter = (Get-ItemProperty $runKey -Name RengiSnap -ErrorAction SilentlyContinue).RengiSnap
 Check "first run keeps the installer's autostart choice" ($runAfter -eq $run) $runAfter

@@ -110,25 +110,26 @@ pub fn run() {
     let want_edit = args.iter().position(|a| a == "--edit").and_then(|i| args.get(i + 1)).map(PathBuf::from);
 
     // Single instance: a second launch hands its request to the running one.
-    let mutex = unsafe { CreateMutexW(None, true, w!("Local\\RengiSnap.Instance")) };
+    let mut mutex = unsafe { CreateMutexW(None, true, w!("Local\\RengiSnap.Instance")) };
     if mutex.is_ok() && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        if let Ok(other) = unsafe { FindWindowW(class_name::MSG, None) } {
+        let Ok(other) = (unsafe { FindWindowW(class_name::MSG, None) }) else { return };
+        // A copy from somewhere else is running (an older download, a
+        // portable copy): this one replaces it instead of handing over.
+        let stale = !want_quit && other_exe(other).is_some_and(|p| std::env::current_exe().map(|me| !same_file(&p, &me)).unwrap_or(false));
+        if stale {
+            log("another copy of Snap is running from a different place; replacing it");
+            close_and_wait(other);
+            if let Ok(h) = mutex {
+                unsafe {
+                    let _ = CloseHandle(h);
+                }
+            }
+            mutex = unsafe { CreateMutexW(None, true, w!("Local\\RengiSnap.Instance")) };
+        } else {
             unsafe {
                 match &want_edit {
-                    _ if want_quit => {
-                        // Wait until the process is really gone, so an installer can replace the exe.
-                        let mut pid = 0u32;
-                        GetWindowThreadProcessId(other, Some(&mut pid));
-                        let proc_ = windows::Win32::System::Threading::OpenProcess(windows::Win32::System::Threading::PROCESS_SYNCHRONIZE, false, pid);
-                        let _ = PostMessageW(Some(other), WM_CLOSE, WPARAM(0), LPARAM(0));
-                        match proc_ {
-                            Ok(h) => {
-                                windows::Win32::System::Threading::WaitForSingleObject(h, 8000);
-                                let _ = CloseHandle(h);
-                            }
-                            Err(_) => std::thread::sleep(std::time::Duration::from_millis(1500)),
-                        }
-                    }
+                    // Wait until the process is really gone, so an installer can replace the exe.
+                    _ if want_quit => close_and_wait(other),
                     Some(p) => {
                         let w: Vec<u16> = p.as_os_str().encode_wide().collect();
                         let cds = windows::Win32::System::DataExchange::COPYDATASTRUCT { dwData: COPY_EDIT, cbData: (w.len() * 2) as u32, lpData: w.as_ptr() as *mut _ };
@@ -144,8 +145,8 @@ pub fn run() {
                     }
                 }
             }
+            return;
         }
-        return;
     }
 
     if want_quit {
@@ -226,6 +227,44 @@ pub fn run() {
     hook::uninstall();
     tray::remove(msg);
     let _ = mutex;
+}
+
+/// The exe of the process that owns `hwnd`.
+fn other_exe(hwnd: HWND) -> Option<PathBuf> {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = vec![0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(h);
+        ok.then(|| PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
+    }
+}
+
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let norm = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().to_lowercase();
+    norm(a) == norm(b)
+}
+
+/// Asks the running copy to quit and waits (up to 8 s) until its process is gone.
+fn close_and_wait(other: HWND) {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(other, Some(&mut pid));
+        let proc_ = OpenProcess(PROCESS_SYNCHRONIZE, false, pid);
+        let _ = PostMessageW(Some(other), WM_CLOSE, WPARAM(0), LPARAM(0));
+        match proc_ {
+            Ok(h) => {
+                WaitForSingleObject(h, 8000);
+                let _ = CloseHandle(h);
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(1500)),
+        }
+    }
 }
 
 fn register_classes(instance: HINSTANCE) {
