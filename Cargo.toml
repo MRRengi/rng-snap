@@ -14,6 +14,8 @@ path = "src/main.rs"
 ab_glyph = "0.2"
 gif = "0.14"
 png = "0.18"
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-20"] }
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 toml = "1"
@@ -57,6 +59,7 @@ features = [
   "Win32_Graphics_Direct2D_Common",
   "Win32_Graphics_DirectWrite",
   "Win32_Graphics_Dxgi_Common",
+  "Win32_Networking_WinHttp",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
   "Win32_Security",

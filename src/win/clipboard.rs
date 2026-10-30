@@ -147,3 +147,43 @@ pub fn put_file(owner: HWND, path: &std::path::Path) -> bool {
         ok
     }
 }
+
+/// Puts a picture with transparency on the clipboard: "PNG" (what Office,
+/// browsers, Figma and Telegram read) plus a DIBV5 with straight alpha.
+pub fn put_rgba(owner: HWND, img: &crate::cutout::Rgba) -> bool {
+    let (w, h) = (img.w, img.h);
+    let header = BITMAPV5HEADER {
+        bV5Size: size_of::<BITMAPV5HEADER>() as u32,
+        bV5Width: w as i32,
+        bV5Height: h as i32,
+        bV5Planes: 1,
+        bV5BitCount: 32,
+        bV5Compression: BI_BITFIELDS,
+        bV5SizeImage: (w * h * 4) as u32,
+        bV5RedMask: 0x00FF_0000,
+        bV5GreenMask: 0x0000_FF00,
+        bV5BlueMask: 0x0000_00FF,
+        bV5AlphaMask: 0xFF00_0000,
+        bV5CSType: 0x7352_4742,
+        bV5Intent: 4,
+        ..Default::default()
+    };
+    let mut bgra = Vec::with_capacity(w * h * 4);
+    for row in img.px.chunks_exact(w * 4).rev() {
+        for p in row.chunks_exact(4) {
+            bgra.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+        }
+    }
+    let head = unsafe { std::slice::from_raw_parts(&header as *const _ as *const u8, size_of::<BITMAPV5HEADER>()) };
+    let (Some(dib), Some(png)) = (global_from(&[head, &bgra]), global_from(&[&img.encode_png()])) else { return false };
+    if !open(owner) {
+        return false;
+    }
+    unsafe {
+        let _ = EmptyClipboard();
+        let ok = SetClipboardData(png_format(), Some(HANDLE(png.0))).is_ok();
+        let _ = SetClipboardData(CF_DIBV5.0 as u32, Some(HANDLE(dib.0)));
+        let _ = CloseClipboard();
+        ok
+    }
+}

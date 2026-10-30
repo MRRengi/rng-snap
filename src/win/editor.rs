@@ -3,6 +3,7 @@
 //! copy the result to the clipboard.
 
 use super::class_name;
+use super::cutui::{self, CutBtn, CutState, Phase, Picture, Shown};
 use super::d2d::{self, Gfx, rect_f};
 use super::theme::{self, Backdrop, Blur};
 use super::toolstrip::{Btn, Slot, Strip, StripState};
@@ -28,6 +29,9 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 const CARET_TIMER: usize = 1;
 const STATUS_TIMER: usize = 2;
 const ANIM_TIMER: usize = 3;
+const CUT_TIMER: usize = 4;
+/// Longest side of the masks used for hover and the on-screen glow.
+const MASK_SIDE: usize = 900;
 
 pub enum Event {
     /// The image changed: copy it to the clipboard soon.
@@ -38,9 +42,13 @@ pub enum Event {
     CustomColor,
     /// Tool / colour / thickness changed: remember them.
     Style,
+    /// Copy the cut-out object (transparent PNG).
+    CutCopy,
+    /// Save the cut-out object next to the screenshots.
+    CutSave,
 }
 
-pub const SLOTS: [Slot; 32] = [
+pub const SLOTS: [Slot; 33] = [
     Slot::B(Btn::Tool(Tool::Select)),
     Slot::B(Btn::Tool(Tool::Arrow)),
     Slot::B(Btn::Tool(Tool::Line)),
@@ -52,6 +60,7 @@ pub const SLOTS: [Slot; 32] = [
     Slot::B(Btn::Tool(Tool::Blur)),
     Slot::B(Btn::Tool(Tool::Step)),
     Slot::B(Btn::Tool(Tool::Crop)),
+    Slot::B(Btn::Tool(Tool::CutOut)),
     Slot::Sep,
     Slot::B(Btn::Color(0)),
     Slot::B(Btn::Color(1)),
@@ -104,6 +113,9 @@ pub struct Editor {
     /// Offscreen copy of everything under the floating chrome, for the glass blur.
     scene: Option<(u32, u32, ID2D1BitmapRenderTarget)>,
     blur: Blur,
+    /// The Cut out tool, started the first time it is picked.
+    pub cut: Option<CutState>,
+    cut_fonts: Option<(f32, [windows::Win32::Graphics::DirectWrite::IDWriteTextFormat; 3])>,
 }
 
 fn dpi_scale(h: HWND) -> f32 {
@@ -162,6 +174,8 @@ impl Editor {
             last_area: Rect::new(0, 0, bw, bh),
             scene: None,
             blur: Blur::default(),
+            cut: None,
+            cut_fonts: None,
         };
         ed.strip.animate = true;
         ed.strip.layout(gfx, &SLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
@@ -359,9 +373,7 @@ impl Editor {
         let c = &mut self.canvas;
         let r = match b {
             Btn::Tool(t) => {
-                let ch = c.set_tool(t);
-                let _ = ch;
-                self.invalidate();
+                self.pick_tool(t);
                 return Some(Event::Style);
             }
             Btn::Color(i) => return self.set_color(PALETTE[i]),
@@ -386,8 +398,197 @@ impl Editor {
         self.apply(r)
     }
 
+
+    fn pick_tool(&mut self, t: Tool) {
+        let _ = self.canvas.set_tool(t);
+        if t == Tool::CutOut {
+            self.sync_cut(false);
+        }
+        self.invalidate();
+    }
+
+    fn cutting(&self) -> bool {
+        self.canvas.tool == Tool::CutOut && self.cut.is_some()
+    }
+
+    /// Size of the hover/glow masks for the current picture.
+    fn mask_size(&self) -> (usize, usize) {
+        let Some(p) = self.cut.as_ref().and_then(|c| c.pic.as_ref()) else { return (1, 1) };
+        let k = (MASK_SIDE as f32 / p.w.max(p.h) as f32).min(1.0);
+        (((p.w as f32 * k).round() as usize).max(1), ((p.h as f32 * k).round() as usize).max(1))
+    }
+
+    /// Makes sure the Cut out worker looks at the picture as it is now
+    /// (marks included). `download` allows fetching the models.
+    fn sync_cut(&mut self, download: bool) {
+        if self.cut.is_none() {
+            self.cut = Some(CutState::new(self.hwnd));
+        }
+        let version = self.canvas.version;
+        let st = self.cut.as_ref().unwrap();
+        let stale = st.checked != Some(version) || st.pic.is_none();
+        let failed = matches!(st.worker.phase(), Phase::NeedModel | Phase::Failed(_));
+        if !stale && !(download && failed) {
+            return;
+        }
+        let f = self.final_frame();
+        let (w, h) = (f.width(), f.height());
+        let st = self.cut.as_mut().unwrap();
+        st.checked = Some(version);
+        let same = st.pic.as_ref().is_some_and(|p| p.w == w && p.h == h && *p.bgra == f.pixels);
+        if same && !(download && failed) {
+            return;
+        }
+        if !same {
+            st.pic = Some(Picture { bgra: Arc::new(f.pixels), w, h });
+            st.hover = None;
+            st.cut = None;
+            st.points.clear();
+        }
+        st.started = std::time::Instant::now();
+        st.worker.picture(st.pic.clone().unwrap(), download);
+        self.cut_anim();
+    }
+
+    /// Keeps the Cut out animation timer running while something moves.
+    fn cut_anim(&self) {
+        let on = self.cutting() && self.cut.as_ref().is_some_and(|c| c.animating());
+        unsafe {
+            if on {
+                SetTimer(Some(self.hwnd), CUT_TIMER, 16, None);
+            } else {
+                let _ = KillTimer(Some(self.hwnd), CUT_TIMER);
+            }
+        }
+    }
+
+    /// Picture coordinates of a client point, if it is on the picture.
+    fn pic_point(&self, p: Point) -> Option<(f32, f32)> {
+        let pic = self.cut.as_ref()?.pic.as_ref()?;
+        let a = self.area();
+        let ip = self.to_img(p);
+        let (x, y) = (ip.x - a.left as f32, ip.y - a.top as f32);
+        (x >= 0.0 && y >= 0.0 && x < pic.w as f32 && y < pic.h as f32).then_some((x, y))
+    }
+
+    fn cut_hover(&mut self, p: Point) {
+        let at = self.pic_point(p);
+        let out = self.mask_size();
+        let Some(st) = &mut self.cut else { return };
+        if st.hit(p.x as f32, p.y as f32) != st.hot {
+            st.hot = st.hit(p.x as f32, p.y as f32);
+            self.invalidate();
+        }
+        let Some(st) = &mut self.cut else { return };
+        if st.worker.phase() != Phase::Ready {
+            return;
+        }
+        match at {
+            Some((x, y)) if st.hot.is_none() => {
+                if st.hover_at.is_some_and(|(hx, hy)| (hx - p.x).abs() + (hy - p.y).abs() < 3) {
+                    return;
+                }
+                st.hover_at = Some((p.x, p.y));
+                let id = st.next_id;
+                st.next_id += 1;
+                st.worker.predict(id, vec![(x, y, true)], true, out);
+            }
+            _ => {
+                st.hover_at = None;
+                if st.hover.take().is_some() {
+                    self.invalidate();
+                }
+            }
+        }
+    }
+
+    fn cut_button(&mut self, b: CutBtn) -> Option<Event> {
+        let st = self.cut.as_mut()?;
+        match b {
+            CutBtn::Download | CutBtn::Retry => {
+                self.sync_cut(true);
+                None
+            }
+            CutBtn::NotNow => {
+                self.pick_tool(Tool::Arrow);
+                Some(Event::Style)
+            }
+            CutBtn::Copy => Some(Event::CutCopy),
+            CutBtn::Sticker => {
+                st.sticker = !st.sticker;
+                if let Some(c) = &mut st.cut {
+                    c.glow = None;
+                }
+                self.invalidate();
+                Some(Event::CutCopy)
+            }
+            CutBtn::Save => Some(Event::CutSave),
+            CutBtn::Clear => {
+                st.clear();
+                self.invalidate();
+                None
+            }
+        }
+    }
+
+    fn cut_click(&mut self, p: Point, shift: bool) {
+        let at = self.pic_point(p);
+        let out = self.mask_size();
+        let Some(st) = &mut self.cut else { return };
+        if st.worker.phase() != Phase::Ready {
+            return;
+        }
+        let Some((x, y)) = at else {
+            st.clear();
+            self.invalidate();
+            return;
+        };
+        if !(shift && st.cut.is_some()) {
+            st.points.clear();
+        }
+        st.points.push((x, y, true));
+        let id = st.next_id;
+        st.next_id += 1;
+        st.worker.predict(id, st.points.clone(), false, out);
+    }
+
+    /// The worker has news.
+    fn cut_news(&mut self) -> Option<Event> {
+        let st = self.cut.as_mut()?;
+        let mut ev = None;
+        while let Some(m) = st.worker.take() {
+            if m.hover {
+                if st.hover_at.is_none() {
+                    continue;
+                }
+                let prev = st.hover.as_ref().and_then(|h| h.bounds());
+                let mut next = Shown::new(m, true);
+                let nb = next.bounds();
+                let moved = match (prev, nb) {
+                    (Some(a), Some(b)) => (a.0 - b.0).abs() + (a.1 - b.1).abs() + (a.2 - b.2).abs() + (a.3 - b.3).abs() > 0.08,
+                    _ => true,
+                };
+                if !moved {
+                    next.since = st.hover.as_ref().map(|h| h.since).unwrap_or(next.since);
+                }
+                st.hover = nb.is_some().then_some(next);
+            } else {
+                st.cut = Some(Shown::new(m, true));
+                st.hover = None;
+                ev = Some(Event::CutCopy);
+            }
+        }
+        self.cut_anim();
+        self.invalidate();
+        ev
+    }
+
     pub fn handle(&mut self, gfx: &Gfx, msg: u32, wp: WPARAM, lp: LPARAM) -> (Option<LRESULT>, Option<Event>) {
         match msg {
+            cutui::WM_CUT => {
+                let ev = self.cut_news();
+                (Some(LRESULT(0)), ev)
+            }
             WM_SIZE => {
                 self.on_size(gfx);
                 (Some(LRESULT(0)), None)
@@ -431,6 +632,9 @@ impl Editor {
                         }
                     }
                     self.invalidate();
+                } else if wp.0 == CUT_TIMER {
+                    self.cut_anim();
+                    self.invalidate();
                 } else if wp.0 == STATUS_TIMER {
                     unsafe {
                         let _ = KillTimer(Some(self.hwnd), STATUS_TIMER);
@@ -465,6 +669,19 @@ impl Editor {
                     self.invalidate();
                     return (Some(LRESULT(0)), None);
                 }
+                if self.cutting() {
+                    if self.in_bar(p) {
+                        if let Some(st) = &mut self.cut {
+                            st.hover_at = None;
+                            if st.hover.take().is_some() || st.hot.take().is_some() {
+                                self.invalidate();
+                            }
+                        }
+                    } else {
+                        self.cut_hover(p);
+                    }
+                    return (Some(LRESULT(0)), None);
+                }
                 if self.dragging {
                     let shift = wp.0 & 0x0004 != 0;
                     let ch = self.canvas.mouse_move(self.to_img(p), shift);
@@ -485,6 +702,14 @@ impl Editor {
                 }
                 if self.space {
                     self.pan = Some((p, self.origin));
+                    return (Some(LRESULT(0)), None);
+                }
+                if self.cutting() {
+                    let hit = self.cut.as_ref().and_then(|c| c.hit(p.x as f32, p.y as f32));
+                    if let Some(b) = hit {
+                        return (Some(LRESULT(0)), self.cut_button(b));
+                    }
+                    self.cut_click(p, wp.0 & 0x0004 != 0);
                     return (Some(LRESULT(0)), None);
                 }
                 self.dragging = true;
@@ -574,7 +799,7 @@ impl Editor {
                 let r = match vk {
                     VK_Z if ctrl => self.canvas.key(Key::Undo),
                     VK_Y if ctrl => self.canvas.key(Key::Redo),
-                    VK_C if ctrl && !typing => return (Some(LRESULT(0)), Some(Event::Copy)),
+                    VK_C if ctrl && !typing && !(self.cutting() && self.cut.as_ref().is_some_and(|c| c.cut.is_some())) => return (Some(LRESULT(0)), Some(Event::Copy)),
                     VK_S if ctrl && shift => {
                         let r = self.strip.items.iter().find(|(b, _)| *b == Btn::Save).map(|(_, r)| *r).unwrap_or_default();
                         let mut pt = POINT { x: r.left, y: r.bottom };
@@ -596,6 +821,14 @@ impl Editor {
                         Change::None
                     }
                     VK_DELETE => self.canvas.key(Key::Delete),
+                    VK_ESCAPE if self.cutting() && self.cut.as_ref().is_some_and(|c| c.cut.is_some() || !c.points.is_empty()) => {
+                        if let Some(c) = &mut self.cut {
+                            c.clear();
+                        }
+                        self.invalidate();
+                        Change::None
+                    }
+                    VK_C if ctrl && self.cutting() && self.cut.as_ref().is_some_and(|c| c.cut.is_some()) => return (Some(LRESULT(0)), Some(Event::CutCopy)),
                     VK_ESCAPE => self.canvas.key(Key::Escape),
                     VK_RETURN => self.canvas.key(Key::Enter),
                     VK_BACK => self.canvas.key(Key::Backspace),
@@ -606,9 +839,9 @@ impl Editor {
                     }
                     _ if !typing && !ctrl => {
                         let ch = char::from_u32(vk.0 as u32).unwrap_or('\0');
-                        if let Some(t) = crate::annot::Tool::from_key(ch) {
-                            let _ = self.canvas.set_tool(t);
-                            self.invalidate();
+                        let tool = if ch == Tool::CutOut.key() { Some(Tool::CutOut) } else { crate::annot::Tool::from_key(ch) };
+                        if let Some(t) = tool {
+                            self.pick_tool(t);
                             return (Some(LRESULT(0)), Some(Event::Style));
                         }
                         Change::None
@@ -652,6 +885,9 @@ impl Editor {
                     if self.canvas.wants(ip) { IDC_SIZEALL } else { IDC_ARROW }
                 }
                 Tool::Text => IDC_IBEAM,
+                Tool::CutOut => {
+                    if self.cut.as_ref().is_some_and(|c| c.hot.is_some()) { IDC_HAND } else { IDC_ARROW }
+                }
                 _ => IDC_CROSS,
             }
         };
@@ -679,6 +915,9 @@ impl Editor {
 
     fn render(&mut self, gfx: &Gfx) {
         let Some(rt) = self.rt.clone() else { return };
+        if self.canvas.tool == Tool::CutOut {
+            self.sync_cut(false);
+        }
         let s = self.scale;
         let p = theme::pal();
         let area = self.area();
@@ -728,6 +967,39 @@ impl Editor {
                     Ok(dc) if self.zoom < 1.0 => dc.DrawBitmap(bmp, Some(&d), 1.0, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, None, None),
                     _ => target.DrawBitmap(bmp, Some(&d), 1.0, mode, None),
                 }
+                if self.canvas.tool == Tool::CutOut {
+                    if let Some(st) = &mut self.cut {
+                        let thick = st.sticker;
+                        let show_hover = st.cut.is_none() || GetKeyState(VK_SHIFT.0 as i32) < 0;
+                        if let Some(c) = &mut st.cut {
+                            if c.glow.is_none() {
+                                c.glow = cutui::glow_bitmap(target, &c.mask, true, thick);
+                            }
+                            if let Some(g) = &c.glow {
+                                target.DrawBitmap(g, Some(&d), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+                            }
+                        }
+                        if let Some(h) = st.hover.as_mut().filter(|_| show_hover) {
+                            if h.glow.is_none() {
+                                h.glow = cutui::glow_bitmap(target, &h.mask, false, false);
+                            }
+                            if let Some(g) = &h.glow {
+                                target.DrawBitmap(g, Some(&d), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+                            }
+                        }
+                        for sh in [st.cut.as_mut(), st.hover.as_mut().filter(|_| show_hover)].into_iter().flatten() {
+                            let k = sh.shimmer();
+                            if k < 1.0 {
+                                if sh.edge.is_none() {
+                                    sh.edge = cutui::edge_bitmap(target, &sh.mask);
+                                }
+                                if let Some(e) = &sh.edge {
+                                    cutui::draw_sweep(target, e, d, k);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             self.draw_marks_ui(target);
             // 2. The scene onto the window, then the glass chrome over it.
@@ -743,6 +1015,29 @@ impl Editor {
             let back = blurred.as_ref().map(|image| Backdrop { image, origin: (0.0, 0.0), zoom: 1.0 });
             let st = self.state();
             self.strip.draw(rt1, gfx, &st, (0.0, 0.0), Some(back.as_ref()));
+            super::uimap::clear("editor.cut.");
+            if self.canvas.tool == Tool::CutOut && self.cut.is_some() {
+                if self.cut_fonts.as_ref().map(|f| f.0) != Some(s) {
+                    if let (Ok(a), Ok(b), Ok(c)) = (gfx.display_font(17.0 * s, true), gfx.ui_font(13.0 * s, false), gfx.ui_font(13.0 * s, true)) {
+                        self.cut_fonts = Some((s, [a, b, c]));
+                    }
+                }
+                let m = self.margin();
+                let area_r = rect_f(0.0, self.chrome_top() as f32, cw, chh - m - 30.0 * s);
+                let hwnd = self.hwnd;
+                if let (Some((_, [title, body, label])), Some(cut)) = (&self.cut_fonts, &mut self.cut) {
+                    cutui::draw_ui(cut, rt1, gfx, &cutui::Fonts { title, body, label }, area_r, s, back.as_ref());
+                    let mut o = POINT::default();
+                    let _ = ClientToScreen(hwnd, &mut o);
+                    if cut.worker.phase() == Phase::Ready {
+                        super::uimap::put("editor.cut.ready", Rect::new(o.x, o.y, o.x + cw as i32, o.y + chh as i32));
+                    }
+                    for (b, r) in &cut.buttons {
+                        let name = format!("editor.cut.{}", format!("{b:?}").to_lowercase());
+                        super::uimap::put(&name, Rect::new(r.left as i32 + o.x, r.top as i32 + o.y, r.right as i32 + o.x, r.bottom as i32 + o.y));
+                    }
+                }
+            }
             // Status bottom-left, zoom bottom-right: small glass pills.
             if self.status_font.as_ref().map(|f| f.0) != Some(s) {
                 if let Ok(f) = gfx.ui_font(12.5 * s, true) {

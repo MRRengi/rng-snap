@@ -1,7 +1,9 @@
 mod app;
 mod card;
 mod clipboard;
+mod cutui;
 mod d2d;
+mod download;
 mod editor;
 mod elements;
 mod files;

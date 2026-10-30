@@ -480,6 +480,40 @@ impl App {
         }
     }
 
+    /// Copies the cut-out object as a transparent PNG.
+    fn cut_copy(&mut self) {
+        let Some(e) = &mut self.editor else { return };
+        let Some(img) = e.cut.as_ref().and_then(|c| c.result()) else { return };
+        let sticker = e.cut.as_ref().is_some_and(|c| c.sticker);
+        // The cutout replaces our own screenshot on the clipboard: forget it.
+        CLIP.with(|c| *c.borrow_mut() = None);
+        let ok = clipboard::put_rgba(self.msg, &img);
+        e.set_status(match (ok, sticker) {
+            (false, _) => "Could not open the clipboard".into(),
+            (true, true) => "Sticker copied".into(),
+            (true, false) => "Cutout copied".into(),
+        });
+    }
+
+    fn cut_save(&mut self) {
+        let Some(e) = &mut self.editor else { return };
+        let Some(img) = e.cut.as_ref().and_then(|c| c.result()) else { return };
+        let folder = self.cfg.save_folder(&paths::pictures_dir());
+        let _ = std::fs::create_dir_all(&folder);
+        let (y, mo, d, h, mi, se) = paths::local_stamp();
+        let stamp = format!("{y:04}-{mo:02}-{d:02} {h:02}.{mi:02}.{se:02}");
+        let mut path = folder.join(format!("Cut {stamp}.png"));
+        let mut n = 2;
+        while path.exists() {
+            path = folder.join(format!("Cut {stamp} ({n}).png"));
+            n += 1;
+        }
+        match std::fs::write(&path, img.encode_png()) {
+            Ok(()) => e.set_status(format!("Saved {}", file_name(&path))),
+            Err(err) => e.set_status(format!("Saving failed: {err}")),
+        }
+    }
+
     fn editor_save(&mut self, folder: Option<PathBuf>) {
         let Some(e) = &mut self.editor else { return };
         let frame = e.final_frame();
@@ -578,7 +612,7 @@ impl App {
 
     fn remember_style(&mut self, tool: Option<Tool>, color: Color, width: usize) {
         if let Some(t) = tool {
-            if t != Tool::Crop && t != Tool::Zoom {
+            if t != Tool::Crop && t != Tool::Zoom && t != Tool::CutOut {
                 self.cfg.ed_tool = t.name().into();
             }
         }
@@ -1026,6 +1060,12 @@ fn on_editor_event(ev: editor::Event) {
                     a.remember_style(Some(st.0), st.1, st.2);
                 }
             });
+        }
+        editor::Event::CutCopy => {
+            with_app(|a| a.cut_copy());
+        }
+        editor::Event::CutSave => {
+            with_app(|a| a.cut_save());
         }
     }
 }

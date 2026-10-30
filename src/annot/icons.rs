@@ -104,6 +104,31 @@ pub fn tool_icon(t: Tool, n: u32) -> Pixmap {
             line(&mut p, &[(7.0, 3.5), (7.0, 17.0), (20.5, 17.0)], 2.0, 255);
             line(&mut p, &[(3.5, 7.0), (17.0, 7.0), (17.0, 20.5)], 2.0, 255);
         }
+        Tool::CutOut => {
+            // A dashed outline lifting off, with a sparkle: "cut by shape".
+            let mut pb = PathBuilder::new();
+            pb.move_to(5.0, 17.5);
+            pb.cubic_to(3.0, 12.0, 6.0, 6.5, 11.0, 6.5);
+            pb.cubic_to(15.5, 6.5, 17.5, 10.0, 16.5, 13.0);
+            pb.cubic_to(15.5, 16.5, 12.0, 15.5, 11.0, 18.5);
+            pb.cubic_to(10.5, 20.0, 7.0, 20.5, 5.0, 17.5);
+            pb.close();
+            if let Some(path) = pb.finish() {
+                let mut s = st(1.8);
+                s.dash = tiny_skia::StrokeDash::new(vec![2.6, 2.2], 0.0);
+                p.stroke_path(&path, &white(255), &s, tr, None);
+            }
+            let mut sp = PathBuilder::new();
+            sp.move_to(18.5, 2.5);
+            sp.quad_to(19.0, 5.0, 21.5, 5.5);
+            sp.quad_to(19.0, 6.0, 18.5, 8.5);
+            sp.quad_to(18.0, 6.0, 15.5, 5.5);
+            sp.quad_to(18.0, 5.0, 18.5, 2.5);
+            sp.close();
+            if let Some(path) = sp.finish() {
+                p.fill_path(&path, &white(255), FillRule::Winding, tr, None);
+            }
+        }
         Tool::Zoom => {
             if let Some(path) = PathBuilder::from_circle(10.0, 10.0, 6.0) {
                 p.stroke_path(&path, &white(255), &st(2.0), tr, None);
@@ -123,7 +148,7 @@ mod tests {
 
     #[test]
     fn every_icon_has_ink() {
-        for t in ALL_TOOLS.into_iter().chain([Tool::Zoom]) {
+        for t in ALL_TOOLS.into_iter().chain([Tool::Zoom, Tool::CutOut]) {
             let p = tool_icon(t, 24);
             let ink = p.data().chunks_exact(4).filter(|c| c[3] > 100).count();
             assert!(ink > 15, "{t:?} has {ink} pixels");

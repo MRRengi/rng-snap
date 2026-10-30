@@ -74,6 +74,8 @@ pub enum Tool {
     Crop,
     /// Video editor only: a camera zoom on part of the frame.
     Zoom,
+    /// Photo editor only: lift an object off the picture by its shape.
+    CutOut,
 }
 
 impl Tool {
@@ -91,6 +93,7 @@ impl Tool {
             Tool::Step => 'N',
             Tool::Crop => 'C',
             Tool::Zoom => 'Z',
+            Tool::CutOut => 'K',
         }
     }
 
@@ -112,6 +115,7 @@ impl Tool {
             Tool::Step => "Step",
             Tool::Crop => "Crop",
             Tool::Zoom => "Zoom",
+            Tool::CutOut => "Cut out",
         }
     }
 

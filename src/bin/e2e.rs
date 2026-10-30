@@ -709,6 +709,63 @@ mod e2e {
         Vec::new()
     }
 
+    /// The clipboard's "PNG" as straight RGBA: (w, h, pixels).
+    fn clip_png_rgba() -> Option<(usize, usize, Vec<u8>)> {
+        if !open_clip() {
+            return None;
+        }
+        let bytes = unsafe {
+            let fmt = RegisterClipboardFormatW(w!("PNG"));
+            GetClipboardData(fmt).ok().map(global_bytes)
+        };
+        unsafe {
+            let _ = CloseClipboard();
+        }
+        let mut dec = png::Decoder::new(std::io::Cursor::new(bytes?));
+        dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut r = dec.read_info().ok()?;
+        let mut buf = vec![0; r.output_buffer_size()?];
+        let info = r.next_frame(&mut buf).ok()?;
+        if info.color_type != png::ColorType::Rgba {
+            return None;
+        }
+        let (w, h) = (info.width as usize, info.height as usize);
+        buf.truncate(w * h * 4);
+        Some((w, h, buf))
+    }
+
+    fn save_rgba(path: &Path, w: usize, h: usize, px: &[u8]) {
+        let Ok(f) = std::fs::File::create(path) else { return };
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(f), w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        if let Ok(mut wr) = enc.write_header() {
+            let _ = wr.write_image_data(px);
+        }
+    }
+
+    /// 800x500 test picture: a red circle (centre 250,250, r 110) and a blue
+    /// square (520..700, 160..340) on a soft gradient.
+    fn make_cut_picture(path: &Path) {
+        let (w, h) = (800usize, 500usize);
+        let mut px = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let t = y as f32 / h as f32;
+                let mut c = [(225.0 - 30.0 * t) as u8, (232.0 - 20.0 * t) as u8, (240.0 - 5.0 * t) as u8];
+                let (dx, dy) = (x as f32 - 250.0, y as f32 - 250.0);
+                if dx * dx + dy * dy <= 110.0 * 110.0 {
+                    c = [220, 40, 40];
+                }
+                if (520..700).contains(&x) && (160..340).contains(&y) {
+                    c = [40, 90, 220];
+                }
+                px.extend_from_slice(&[c[0], c[1], c[2], 255]);
+            }
+        }
+        save_rgba(path, w, h, &px);
+    }
+
     fn pictures() -> PathBuf {
         PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Pictures").join("Snap")
     }
@@ -1727,6 +1784,118 @@ mod e2e {
                     rep.check("VE editor closes", wait(4000, || find(w!("RengiSnapVideoEditor")).is_none()), "");
                 }
             }
+        }
+
+        // CO: Cut out. Open a test picture, pick the tool (K), download the
+        // models, click the circle: the clipboard gets a transparent PNG of
+        // just the circle. Then Sticker, Shift+click the square, Save, Esc.
+        let co_src = pictures().join("co-src.png");
+        make_cut_picture(&co_src);
+        let _ = launch_with(&exe, &home, &["--edit", &co_src.to_string_lossy()]);
+        let opened = wait(10_000, || visible(w!("RengiSnapEditor")));
+        rep.check("CO --edit opens the picture in the editor", opened, "");
+        if opened {
+            let ed = find(w!("RengiSnapEditor")).unwrap();
+            unsafe {
+                let _ = SetForegroundWindow(ed);
+            }
+            sleep(1200);
+            tap(VK_K);
+            sleep(800);
+            screenshot(&rep.dir, "co1-first-use");
+            let card = click_ui("editor.cut.download");
+            rep.check("CO first use offers the download", card, "");
+            let t0 = Instant::now();
+            let ready = wait(300_000, || ui("editor.cut.ready").is_some());
+            rep.check("CO models download and the picture is read", ready, &format!("{:.1} s", t0.elapsed().as_secs_f32()));
+            if !ready {
+                screenshot(&rep.dir, "co1-not-ready");
+                let log = std::fs::read_to_string(home.join("log.txt")).unwrap_or_default();
+                rep.line(&format!("CO log: {}", log.lines().filter(|l| l.contains("cut")).collect::<Vec<_>>().join(" | ")));
+            }
+            let img = ui("editor.image").unwrap_or_default();
+            let k = img.width() as f32 / 800.0;
+            let at = |x: f32, y: f32| (img.left + (x * k).round() as i32, img.top + (y * k).round() as i32);
+            if ready {
+                let (cx, cy) = at(250.0, 250.0);
+                move_to(cx - 30, cy - 20);
+                sleep(200);
+                move_to(cx, cy);
+                sleep(250);
+                screenshot(&rep.dir, "co2-hover-shimmer");
+                sleep(900);
+                screenshot(&rep.dir, "co2-hover");
+                let s0 = seq();
+                click_at(cx, cy);
+                let copied = wait(10_000, || seq() != s0);
+                rep.check("CO a click copies the cutout", copied, "");
+                sleep(300);
+                screenshot(&rep.dir, "co3-cut");
+                let plain = clip_png_rgba();
+                match &plain {
+                    Some((w, h, px)) => {
+                        save_rgba(&rep.dir.join("co4-clipboard.png"), *w, *h, px);
+                        let a = |x: usize, y: usize| px[(y * w + x) * 4 + 3];
+                        let c = |x: usize, y: usize| &px[(y * w + x) * 4..(y * w + x) * 4 + 3];
+                        rep.check("CO cutout is the circle's size", (210..=236).contains(w) && (210..=236).contains(h), &format!("{w}x{h}"));
+                        rep.check("CO corners are transparent", [a(0, 0), a(w - 1, 0), a(0, h - 1), a(w - 1, h - 1)].iter().all(|&v| v < 16), &format!("{} {} {} {}", a(0, 0), a(w - 1, 0), a(0, h - 1), a(w - 1, h - 1)));
+                        let mid = c(w / 2, h / 2);
+                        rep.check("CO middle is opaque red", a(w / 2, h / 2) > 245 && mid[0] > 180 && mid[1] < 90, &format!("{:?} a{}", mid, a(w / 2, h / 2)));
+                        let solid = px.chunks_exact(4).filter(|p| p[3] > 128).count() as f32;
+                        let disc = std::f32::consts::PI * 110.0 * 110.0;
+                        rep.check("CO the cut covers the circle and nothing else", (solid / disc - 1.0).abs() < 0.08, &format!("{:.3}", solid / disc));
+                    }
+                    None => rep.check("CO clipboard has a transparent PNG", false, ""),
+                }
+                let s1 = seq();
+                let st = click_ui("editor.cut.sticker");
+                let recopied = st && wait(10_000, || seq() != s1);
+                rep.check("CO Sticker re-copies", recopied, "");
+                sleep(400);
+                screenshot(&rep.dir, "co5-sticker");
+                if let (Some((pw, _, _)), Some((w, h, px))) = (&plain, clip_png_rgba()) {
+                    save_rgba(&rep.dir.join("co5-sticker-clipboard.png"), w, h, &px);
+                    let whites = px.chunks_exact(4).filter(|p| p[3] > 240 && p[0] > 240 && p[1] > 240 && p[2] > 240).count();
+                    rep.check("CO sticker grows a white outline", w > pw + 16 && whites > 500, &format!("{w}x{h}, {whites} white px"));
+                    let corner = px[3];
+                    rep.check("CO sticker corners stay transparent", corner < 16, &format!("{corner}"));
+                }
+                // Back to the clean cut, then add the square.
+                let s2 = seq();
+                click_ui("editor.cut.sticker");
+                wait(10_000, || seq() != s2);
+                let (qx, qy) = at(610.0, 250.0);
+                move_to(qx, qy);
+                sleep(300);
+                let s3 = seq();
+                key(VK_SHIFT, false);
+                sleep(40);
+                click_at(qx, qy);
+                sleep(40);
+                key(VK_SHIFT, true);
+                let added = wait(10_000, || seq() != s3);
+                sleep(300);
+                screenshot(&rep.dir, "co6-both");
+                match clip_png_rgba() {
+                    Some((w, h, px)) => {
+                        save_rgba(&rep.dir.join("co6-both-clipboard.png"), w, h, &px);
+                        rep.check("CO Shift+click adds the square", added && (440..=480).contains(&w) && (210..=240).contains(&h), &format!("{w}x{h}"));
+                    }
+                    None => rep.check("CO Shift+click adds the square", false, "no PNG"),
+                }
+                let before: Vec<PathBuf> = files_with("png").into_iter().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Cut "))).collect();
+                click_ui("editor.cut.save");
+                let saved = wait(5000, || files_with("png").iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Cut ")) && !before.contains(p)));
+                rep.check("CO Save PNG writes Cut <time>.png", saved, "");
+                tap(VK_ESCAPE);
+                sleep(400);
+                rep.check("CO Esc clears the cut", ui("editor.cut.copy").is_none(), "");
+                screenshot(&rep.dir, "co7-cleared");
+            }
+            unsafe {
+                let _ = PostMessageW(Some(ed), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+            wait(3000, || find(w!("RengiSnapEditor")).is_none());
         }
 
         // HM: Home. A plain second launch (Start menu, Explorer) brings it up.

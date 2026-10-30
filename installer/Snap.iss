@@ -88,6 +88,11 @@ Filename: "{app}\Snap.exe"; Description: "Launch Snap"; Flags: nowait postinstal
 [UninstallRun]
 Filename: "{app}\Snap.exe"; Parameters: "--quit"; Flags: runhidden waituntilterminated; RunOnceId: "QuitSnap"
 
+[UninstallDelete]
+; Cut out models downloaded on first use.
+Type: filesandordirs; Name: "{localappdata}\Snap\models"
+Type: dirifempty; Name: "{localappdata}\Snap"
+
 [Code]
 const
   UninstKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6B2C7E1A-5D7F-4E0B-9C8A-52454E474953}_is1';

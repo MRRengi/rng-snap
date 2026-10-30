@@ -429,6 +429,8 @@ impl Canvas {
                 self.drag = Drag::Crop;
                 self.bump(Change::Redraw.max_with(c))
             }
+            // Handled by the editor window, never drawn as a mark.
+            Tool::CutOut => c,
         }
     }
 

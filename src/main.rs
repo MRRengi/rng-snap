@@ -2,6 +2,7 @@
 
 mod annot;
 mod config;
+mod cutout;
 mod geom;
 mod gifenc;
 mod icon;
