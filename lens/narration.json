@@ -1,11 +1,52 @@
 {
-  "voice_id": "wUc0HMbyLmMJH0m2egfS",
-  "takes": 3,
-  "tts": {
-    "model_id": "eleven_v4",
-    "settings": {"stability": 0.45, "similarity_boost": 0.75}
+ "voice_id": "wUc0HMbyLmMJH0m2egfS",
+ "takes": 3,
+ "tts": {
+  "model_id": "eleven_v4",
+  "settings": {
+   "stability": 0.45,
+   "similarity_boost": 0.75
+  }
+ },
+ "music_prompt": "Confident modern electronic track for a 40 second tech product promo. Starts immediately on the first beat with a punchy kick and warm synth bass, no slow intro. Bright plucked arpeggio, crisp claps, steady 104 BPM, optimistic and clean. Even energy under a voiceover, no vocals, no big drops, short soft ending.",
+ "music_ms": 45000,
+ "text": "Still looking like this on calls? Your phone has a way better camera. Lens turns it into a webcam for your PC.\n\nOpen Lens on the phone, and the PC finds it by itself. Over Wi-Fi, or USB.\n\nIn Zoom, Teams, OBS or Discord, just pick the camera called Lens.\n\nBlur the background with one click.\n\nTurn on auto-frame, and the shot follows your face.\n\nNeed a minute? Hit pause, and everyone sees, be right back.\n\nUp to 4K at sixty frames per second. No ads, no watermark, no pro version.\n\nLens. Free, on GitHub.",
+ "sfx": [
+  {
+   "name": "whoosh",
+   "text": "Fast clean whoosh transition for a modern tech product video, airy, short, no reverb tail",
+   "dur": 0.7,
+   "inf": 0.6
   },
-  "music_prompt": "Warm minimal electronic background for a software product demo about cameras and video calls. Soft analog synth pads, a gentle plucked arpeggio with a little shimmer, light airy percussion and a soft kick, steady 100 BPM, optimistic and clean, modern, no vocals, no big drops, even energy throughout, ends softly.",
-  "music_ms": 60000,
-  "text": "Your phone has a better camera than your laptop. Lens turns it into a webcam for your PC.\n\nOpen Lens on the phone, and the PC finds it by itself. Over Wi-Fi, or USB.\n\nIn Zoom, Teams, OBS or Discord, just pick the camera called Lens.\n\nBlur the background with one click.\n\nTurn on auto-frame, and the shot follows your face.\n\nNeed a minute? Hit pause, and everyone sees, be right back.\n\nUp to 4K at sixty frames per second. No ads, no watermark, no pro version.\n\nLens. Free, on GitHub."
+  {
+   "name": "impact",
+   "text": "Deep soft cinematic hit with a subtle bright shimmer tail, modern product logo reveal, clean, not aggressive",
+   "dur": 2.0,
+   "inf": 0.6
+  },
+  {
+   "name": "click",
+   "text": "Single crisp computer mouse click, close microphone, dry, no room",
+   "dur": 0.5,
+   "inf": 0.8
+  },
+  {
+   "name": "swoosh",
+   "text": "Very subtle soft air swoosh for a camera move in a screen recording, gentle and quiet",
+   "dur": 1.0,
+   "inf": 0.6
+  },
+  {
+   "name": "chime",
+   "text": "Soft positive UI chime, device connected, two warm notes, short and clean",
+   "dur": 0.8,
+   "inf": 0.7
+  },
+  {
+   "name": "glitch",
+   "text": "Short low-quality webcam static and digital noise burst, small and quiet",
+   "dur": 0.6,
+   "inf": 0.6
+  }
+ ]
 }

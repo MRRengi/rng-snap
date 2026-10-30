@@ -14,7 +14,7 @@ jobs:
       - name: Stock footage (Mixkit, free license)
         run: |
           mkdir -p results/stock
-          for id in 10448 10441 10446 10457 10449 4834 39814; do
+          for id in 10446; do
             curl -sSfL -o results/stock/$id-1080.mp4 https://assets.mixkit.co/videos/$id/$id-1080.mp4 || \
             curl -sSfL -o results/stock/$id-720.mp4 https://assets.mixkit.co/videos/$id/$id-720.mp4 || echo "miss $id"
           done

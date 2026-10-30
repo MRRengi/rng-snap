@@ -46,6 +46,14 @@ for i in range(cfg["takes"]):
         (out / f"words-{i}.json").write_text(json.dumps(s.json()["words"]))
         note(f"stt {i}: {s.json()['text']}")
 
+for fx in cfg.get("sfx", []):
+    r = requests.post(f"{API}/v1/sound-generation?output_format=mp3_44100_128", headers=H, timeout=300, json={
+        "text": fx["text"], "duration_seconds": fx["dur"], "prompt_influence": fx["inf"], "model_id": "eleven_text_to_sound_v2"})
+    if ok(r, f"sfx {fx['name']}"):
+        for k in range(1):
+            (out / f"sfx-{fx['name']}.mp3").write_bytes(r.content)
+        note(f"sfx {fx['name']} ok")
+
 r = requests.post(f"{API}/v1/music?output_format=mp3_44100_128", headers=H, timeout=600, json={"prompt": cfg["music_prompt"], "music_length_ms": cfg["music_ms"]})
 if ok(r, "music"):
     (out / "music.mp3").write_bytes(r.content)
