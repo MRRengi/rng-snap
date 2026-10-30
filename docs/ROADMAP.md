@@ -18,11 +18,20 @@
   - Checked on CI: e2e in both themes, plus a real silent install and uninstall.
   - Spec: `docs/specs/6-setup-and-redesign.md`
 
-- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor), v0.6.0 (+ setup, Home, redesign) on GitHub Releases.
+- **Block 7 - Cut out** (like Apple's Lift subject / stickers):
+  - **K** in the photo editor: the object under the cursor glows along its outline, a click lifts it off and copies a transparent PNG. Shift+click adds objects, Esc clears.
+  - Result bar: Copy, **Sticker** (white outline + shadow), Save PNG, Clear.
+  - Runs locally: MobileSAM through ONNX Runtime on the CPU. The model (57 MB) downloads once on first use, checked by SHA-256, into `%LOCALAPPDATA%\Snap\models`; uninstall removes it.
+  - Models are exported from the official weights by a CI workflow (`cutout-assets`) into the `cutout-models-v1` pre-release.
+  - Checked on CI: download, cut a circle (transparent corners, exact area), sticker, Shift+click, save.
+  - Spec: `docs/specs/7-cut-out.md`
+
+- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor), v0.6.0 (+ setup, Home, redesign), v0.6.2 (name is just Snap), v0.7.0 (+ Cut out) on GitHub Releases.
 - **Demo video** for LinkedIn/X (16:9 + 1:1, 47 s) filmed on the Windows CI desktop (`demo` branch, `demo/edit.py` edits it), posts written. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
 
 **WE ARE HERE**
-- Maks installs v0.6.0 from the setup and checks:
+- Maks installs v0.7.0 and tries Cut out on his own screenshots and photos (people, pets, UI elements).
+- From before, still to check on his PC:
   - Home.
   - The glass look in his theme, and switching the Windows theme.
   - "Open with Snap".
@@ -33,7 +42,7 @@
   - Whether the yellow capture border shows.
 
 **Ahead**
-- **Block 7 - Distribution**:
+- **Block 8 - Distribution**:
   - winget package.
   - Code signing, so SmartScreen stops warning.
   - Auto-update check on Home.

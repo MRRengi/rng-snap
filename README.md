@@ -23,6 +23,12 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 - Arrows with soft shadows, outlined text, numbered circles that count themselves
 - Every change goes to the clipboard by itself
 
+## Cut out
+- **K** in the editor: point at anything in the picture and its outline glows; click and it's lifted off, already on the clipboard as a transparent PNG
+- **Shift**+click adds another object, **Esc** starts over
+- **Sticker** adds a white outline and a soft shadow, like iMessage stickers; **Save PNG** keeps it next to your captures
+- Runs on your PC (MobileSAM through ONNX Runtime), nothing is uploaded. The model is a one-time 57 MB download the first time you use it
+
 ## Video
 - Up to your monitor's refresh rate (120 / 144 / 240 fps), straight from the GPU into its hardware encoder (H.264, HEVC when needed)
 - System sound and microphone, pause, discard; the control bar never appears in the video
@@ -41,7 +47,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 |---|---|
 | Anywhere | **Scroll Lock** capture (press again to stop a recording) |
 | Selecting | **Wheel** bigger / smaller region · **Ctrl** + release: mark it up · **C** copy pixel color · **Esc** cancel |
-| Marks and editor | **V** select · **A** arrow · **L** line · **R** rectangle · **E** ellipse · **P** pen · **H** marker · **T** text · **B** blur · **N** step · **C** crop (editor) · **Shift** snap to 45° / square |
+| Marks and editor | **V** select · **A** arrow · **L** line · **R** rectangle · **E** ellipse · **P** pen · **H** marker · **T** text · **B** blur · **N** step · **C** crop · **K** cut out (editor) · **Shift** snap to 45° / square |
 | Editor | **Ctrl+Z / Ctrl+Y** undo / redo · **Ctrl+C** copy · **Ctrl+S** save · **Ctrl+wheel** zoom · **Ctrl+0** fit · **Ctrl+1** 100% · **Space**+drag pan |
 | Quick marks | **Enter** finish and copy |
 | Video editor | **Space** play / pause · **S** split · **Delete** remove piece or mark · **Z** zoom · **←/→** frame step (**Shift** 1 s) · **Home/End** · **Ctrl+E** export · **Ctrl+Z / Ctrl+Y** undo / redo |
@@ -63,7 +69,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 - Windows 10 1809+; Windows 11 recommended (Mica and acrylic glass need Windows 11 22H2+)
 - The setup and exe are not signed, so SmartScreen may warn on first run: More info > Run anyway
 - Lives in the tray; "Start with Windows" is a switch on Home
-- Settings live in `%APPDATA%\Snap\config.toml`
+- Settings live in `%APPDATA%\Snap\config.toml`; the Cut out model in `%LOCALAPPDATA%\Snap\models` (removed on uninstall)
 
 ## Building
 ```
