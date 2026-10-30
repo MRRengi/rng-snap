@@ -16,7 +16,7 @@ const ev = (t, type, o = {}) => EV.push({ t: +t.toFixed(3), type, ...o });
 
 // ───────── camera (recording-software camera: zoom ≥ 1, never past the monitor)
 const EASE = { eio, ss, eo, whip: x => { x = clamp(x); return x < .5 ? 16 * x ** 5 : 1 - Math.pow(-2 * x + 2, 5) / 2; } };
-let CAM0 = [330, 175, 2.6]; const MOVES = [];
+let CAM0 = [871, 560, 1.95]; const MOVES = [];
 const cam = (t0, d, to, e = 'eio') => MOVES.push({ t0, d, to, e });
 export function camAt(t) {
   let v = CAM0.slice(); v[2] = Math.log(v[2]);
@@ -120,15 +120,16 @@ export function build(words, feed, cat) {
   for (let i = 0; i < SUBS.length - 1; i++) SUBS[i].t1 = Math.min(SUBS[i].t1, SUBS[i + 1].t0 - .05);
 
   // ═════ A. cold open: the brand, then the empty state's phone icon comes alive (0–4.8)
-  T.lens = W('s1', 'lens'); T.whip0 = W('s1', 'turns') - .2;
-  cam(0, 2.2, [345, 180, 2.45], 'ss');
-  cam(T.whip0, .5, [G.cx, 530, 2.3], 'whip'); ev(T.whip0 - .02, 'whoosh', { d: 1 });
-  T.jit0 = W('s1', 'your'); T.born0 = W('s1', 'phone') - .02; T.born1 = T.born0 + .5; ev(T.born0, 'morph');
+  // the result first: the dancing dog is live from frame one, the clapping cat answers in a call
+  T.lens = W('s1', 'lens'); T.cat0 = T.lens - .05; ev(T.cat0 - .1, 'pop', { i: 1 });
+  cam(T.cat0 - .35, 1.0, [1110, 545, 1.42], 'eio');
+  T.jit0 = 99; T.born0 = W('s1', 'phone') - .02; T.born1 = T.born0 + .5; ev(T.born0, 'morph');
   T.land0 = T.born1 + .38; T.limits = W('s1', 'no'); ev(T.limits, 'cheer');
-  cam(W('s1', 'webcam') - .05, 1.3, [960, 540, 1.0], 'eio');
+  cam(W('s1', 'open') - .15, 1.2, [960, 540, 1.0], 'eio');
+  T.cat1 = 6.95;
   C.hide(0, T.born1)
-   .jump(T.born1, T.land0, at('es-icon', .5, 1), at('es-h', .5, 0), 46)
-   .stand(T.land0, 7.2, at('es-h', .5, 0), { eyes: t => t < T.land0 + .5 ? 'wide' : t < T.limits - .1 ? (t < W('s1', 'open') ? 'l' : 'r') : 'happy', arms: t => t > T.limits && t < T.limits + .9 ? 'up' : 'down' });
+   .jump(T.born1, T.land0, at('badge', .5, 0, 0, -6), at('badge', .5, 0), 60)
+   .stand(T.land0, 7.2, at('badge', .5, 0), { eyes: t => t < T.land0 + .5 ? 'wide' : t < T.limits - .1 ? (t < W('s1', 'open') ? 'l' : 'r') : 'happy', arms: t => t > T.limits && t < T.limits + .9 ? 'up' : 'down' });
 
   // ═════ B. 01 Connect (7.2–13.2)
   T.wipe1 = 7.2;
@@ -212,16 +213,17 @@ export const CH = [[7.2, '01', 'Connect'], [13.2, '02', 'Effects'], [18.6, '03',
 export function frame(t) {
   const F = { t, hud: {}, fx: [], actor: C, cursor: CUR };
   F.cam = camAt(t);
-  F.desk = { lensOn: t >= T.stream };
-  const S = F.app = { nav: 'phone', panel: 'phone0', connected: t >= T.stream, uptime: '0:' + String(Math.max(0, Math.floor(t - T.live + 7))).padStart(2, '0'), fxOn: t >= T.blur };
+  const cold = t < T.wipe1;
+  F.desk = { lensOn: cold || t >= T.stream };
+  const S = F.app = { nav: 'phone', panel: cold ? 'phone1' : 'phone0', connected: cold || t >= T.stream, uptime: cold ? '1:' + String(12 + Math.floor(t)).padStart(2, '0') : '0:' + String(Math.max(0, Math.floor(t - T.live + 7))).padStart(2, '0'), fxOn: t >= T.blur };
   // A: empty state, the icon wobbles, then is reborn as Pix
-  S.empty = { jit: t > T.jit0 && t < T.born0 ? 1.2 + 2.2 * seg(t, T.jit0, T.born0) : 0, gone: t >= T.born0 + .02 };
-  S.emptyOp = t < T.stream ? 1 : 1 - seg(t, T.stream, T.stream + .25);
+  S.empty = {};
+  S.emptyOp = cold ? 0 : t < T.stream ? 1 : 1 - seg(t, T.stream, T.stream + .25);
   if (t >= T.born0 && t < T.born1 + .03) F.fx.push(A => birth(A, seg(t, T.born0, T.born1)));
   // B
   if (t >= T.found) S.found = { p: back(seg(t, T.found, T.found + .3)), press: t >= T.click && t < T.click + .12, busy: t >= T.click + .12 && t < T.stream };
   if (t >= T.live) S.panel = 'phone1';
-  S.vidOp = seg(t, T.stream, T.stream + .25);
+  S.vidOp = cold ? 1 : seg(t, T.stream, T.stream + .25);
   // C/D/E video state
   const V = S.vidUI = { blur: t >= T.blur, frame: t >= T.af };
   if (t > T.blur - .45 && t < T.blur + .35) V.hov = 'blur', V.tip = { key: 'blur', text: 'Background blur', op: Math.min(seg(t, T.blur - .45, T.blur - .3), 1 - seg(t, T.blur + .2, T.blur + .35)) };
@@ -243,6 +245,8 @@ export function frame(t) {
     const p = t < t1 ? back(seg(t, t0 - .1, t0 + .18), 1.4) : 1 - eio(seg(t, t1, t1 + .3));
     F.calls.push({ k, name, x, y, op: Math.min(1, p * 3), tf: `scale(${.6 + .4 * p})`, brb, hot: hot && t >= T.hot + i * .06 }); });
   callsUp(T.pops, T.close, false, true);
+  if (t >= T.cat0 - .1 && t < T.cat1 + .3) { const p = t < T.cat1 ? back(seg(t, T.cat0 - .1, T.cat0 + .18), 1.4) : 1 - eio(seg(t, T.cat1, T.cat1 + .3));
+    F.calls.push({ k: 'hook', name: 'Zoom', x: 1250, y: 470, op: Math.min(1, p * 3), tf: `scale(${.6 + .4 * p})`, hot: false }); }
   // F: toast, then the window leaves and the end card arrives
   if (t >= T.toast) { const k = eo(seg(t, T.toast, T.toast + .45)); F.toast = { op: Math.min(1, k * 2) * (1 - seg(t, T.out, T.out + .6)), tf: `translateX(${(1 - k) * 440}px)` }; }
   if (t >= T.out) { const k = eio(seg(t, T.out, T.out + .8)); S.winSt = { op: 1 - k, tf: `scale(${1 - .08 * k})` }; if (t >= T.out + .8) F.app = null; }
@@ -250,10 +254,10 @@ export function frame(t) {
   hud(F, t);
   return F;
 }
-// Pix assembles out of the phone icon: its orange outline pixels fly to Pix's pixels and turn teal
+// Pix assembles out of the LIVE badge: its pixels fly out of the badge and turn teal
 function birth(A, p) {
-  const ic = A('es-icon', 0, 0); if (!ic) return '';
-  const dst = PX.pixels({ x: ic.x + ic.w / 2, y: ic.y + ic.h, px: 6 });
+  const ic = A('badge', 0, 0); if (!ic) return '';
+  const dst = PX.pixels({ x: ic.x + ic.w / 2, y: ic.y - 6, px: 6 });
   const N = dst.length; let h = '';
   dst.forEach((d, i) => {
     const a = (i / N) * Math.PI * 2, sx = ic.x + ic.w / 2 + Math.cos(a) * ic.w * .5, sy = ic.y + ic.h / 2 + Math.sin(a) * ic.h * .5;
