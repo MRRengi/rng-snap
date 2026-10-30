@@ -16,6 +16,7 @@ jobs:
         run: |
           pip install -q requests
           python3 lens/screencast_vo.py results/screencast
+          python3 lens/align.py results/screencast results/screencast
       - name: Publish
         if: always()
         run: |
