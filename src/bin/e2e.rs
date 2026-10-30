@@ -126,6 +126,48 @@ mod e2e {
         }
     }
 
+    /// The capture hotkey: Alt+Shift+S.
+    fn hotkey() {
+        key(VK_LMENU, false);
+        key(VK_LSHIFT, false);
+        sleep(20);
+        tap(VK_S);
+        sleep(20);
+        key(VK_LSHIFT, true);
+        key(VK_LMENU, true);
+    }
+
+    unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if msg == WM_PAINT {
+            unsafe {
+                let mut ps = PAINTSTRUCT::default();
+                let dc = BeginPaint(hwnd, &mut ps);
+                let b = CreateSolidBrush(COLORREF(0x0000FF00));
+                FillRect(dc, &RECT { left: 0, top: 0, right: 2000, bottom: 2000 }, b);
+                let _ = DeleteObject(b.into());
+                let _ = EndPaint(hwnd, &ps);
+            }
+            return LRESULT(0);
+        }
+        unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+    }
+
+    /// The more coloured of the two pixels the 2 px frame line covers at (x, y).
+    fn edge_color(img: &Frame, x: i32, y: i32) -> (u8, u8, u8) {
+        let mut best = (0u8, 0u8, 0u8);
+        let mut score = -1i32;
+        for dx in 0..=1 {
+            if let Some(p) = img.pixel(x + dx, y) {
+                let s = (p[2] as i32 - p[0] as i32).abs();
+                if s > score {
+                    score = s;
+                    best = (p[2], p[1], p[0]);
+                }
+            }
+        }
+        best
+    }
+
     fn ctrl_tap(vk: VIRTUAL_KEY) {
         key(VK_CONTROL, false);
         sleep(20);
@@ -928,7 +970,7 @@ mod e2e {
         wait(10000, || find(w!("RengiSnapMsg")).is_some()).then_some(c)
     }
 
-    /// Hover-click the region (or drag `drag`), record `ms`, stop with Scroll Lock.
+    /// Hover-click the region (or drag `drag`), record `ms`, stop with the hotkey.
     fn record(target: Option<(i32, i32)>, drag: Option<((i32, i32), (i32, i32))>, steps: &[i32], ms: u64, dir: &Path, shot: &str) -> Option<PathBuf> {
         let before = files_with("mp4").len();
         open_overlay()?;
@@ -952,7 +994,7 @@ mod e2e {
         sleep(ms / 2);
         screenshot(dir, shot);
         sleep(ms / 2);
-        tap(VK_SCROLL);
+        hotkey();
         if !wait(8000, || files_with("mp4").len() > before && !visible(w!("RengiSnapBar"))) {
             return None;
         }
@@ -992,7 +1034,7 @@ mod e2e {
     /// Presses the hotkey and waits for the overlay. Returns ms until it showed.
     fn open_overlay() -> Option<u128> {
         let t = Instant::now();
-        tap(VK_SCROLL);
+        hotkey();
         wait(5000, overlay_visible).then(|| t.elapsed().as_millis())
     }
 
@@ -1039,7 +1081,6 @@ mod e2e {
             return 1;
         }
         sleep(500);
-        let scroll_before = unsafe { GetKeyState(VK_SCROLL.0 as i32) } & 1;
 
         // A: drag a frame over part of the pattern.
         let s0 = seq();
@@ -1495,7 +1536,7 @@ mod e2e {
                 under_bar = Some(grab_screen());
                 screenshot(&rep.dir, "v5-fullscreen-recording");
                 sleep(600);
-                tap(VK_SCROLL);
+                hotkey();
                 wait(8000, || files_with("mp4").len() > before);
                 sleep(400);
             }
@@ -1567,7 +1608,7 @@ mod e2e {
                 sleep(1500);
                 click_at(pause.0, pause.1);
                 sleep(1000);
-                tap(VK_SCROLL);
+                hotkey();
                 wait(8000, || !visible(w!("RengiSnapBar")));
                 sleep(500);
                 match files_with("mp4").pop().as_deref().map(inspect) {
@@ -1613,7 +1654,7 @@ mod e2e {
                     }
                     sleep(300);
                     screenshot(&rep.dir, "v8-bar-look");
-                    tap(VK_SCROLL);
+                    hotkey();
                     wait(8000, || !visible(w!("RengiSnapBar")));
                 }
             }
@@ -1901,6 +1942,112 @@ mod e2e {
             wait(3000, || find(w!("RengiSnapEditor")).is_none());
         }
 
+        // MC: the frame says what you'll get: blue in Photo, red in Video and Window.
+        if open_overlay().is_some() {
+            click_ui("panel.Photo");
+            sleep(200);
+            move_to(PAT.left + 60, PAT.top + 60);
+            sleep(400);
+            let photo = edge_color(&grab_screen(), PAT.left, PAT.top + PAT.height() / 2);
+            screenshot(&rep.dir, "mc1-photo-blue");
+            click_ui("panel.Video");
+            sleep(200);
+            move_to(PAT.left + 62, PAT.top + 60);
+            sleep(400);
+            let video = edge_color(&grab_screen(), PAT.left, PAT.top + PAT.height() / 2);
+            screenshot(&rep.dir, "mc2-video-red");
+            click_ui("panel.Window");
+            sleep(200);
+            move_to(PAT.left + 64, PAT.top + 60);
+            sleep(400);
+            let window = edge_color(&grab_screen(), PAT.left, PAT.top + PAT.height() / 2);
+            screenshot(&rep.dir, "mc3-window-red");
+            rep.check("MC Photo frame is blue", photo.2 as i32 > photo.0 as i32 + 60, &format!("{photo:?}"));
+            rep.check("MC Video frame is red", video.0 as i32 > video.2 as i32 + 60 && video.0 > 150, &format!("{video:?}"));
+            rep.check("MC Window frame is red", window.0 as i32 > window.2 as i32 + 60 && window.0 > 150, &format!("{window:?}"));
+            click_ui("panel.Photo");
+            sleep(200);
+            close_overlay_if_open();
+        } else {
+            rep.check("MC hotkey opens overlay", false, "");
+        }
+
+        // WN: Window mode records the animated window itself. A bright green
+        // "popup" covers part of it and must not be in the video. Midway the
+        // window gets wider (the video keeps its size, with bars), then is
+        // minimized for 1.5 s (the recording pauses itself).
+        let popup = spawn_window(w!("E2EPopup"), Rect::new(ANIM.left + 200, ANIM.top + 60, ANIM.left + 360, ANIM.top + 180), popup_proc, no_children);
+        let anim_hwnd = find(w!("E2EAnim"));
+        sleep(300);
+        let before = files_with("mp4").len();
+        let mut wn_file = None;
+        if let (Some(_), Some(ah)) = (open_overlay(), anim_hwnd) {
+            click_ui("panel.Window");
+            sleep(250);
+            move_to(ANIM.left + 60, ANIM.top + 200);
+            sleep(300);
+            screenshot(&rep.dir, "wn1-pick-window");
+            click();
+            let started = wait(4000, || visible(w!("RengiSnapBar")));
+            rep.check("WN a click on a window starts recording it", started, "");
+            if started {
+                sleep(1500);
+                screenshot(&rep.dir, "wn2-recording-with-popup");
+                unsafe {
+                    let _ = SetWindowPos(ah, None, ANIM.left, ANIM.top, 480, 240, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                sleep(1000);
+                unsafe {
+                    let _ = ShowWindow(ah, SW_MINIMIZE);
+                }
+                sleep(1500);
+                unsafe {
+                    let _ = ShowWindow(ah, SW_RESTORE);
+                    let _ = SetWindowPos(ah, Some(HWND_TOPMOST), ANIM.left, ANIM.top, ANIM.width(), ANIM.height(), SWP_NOACTIVATE);
+                }
+                sleep(1000);
+                hotkey();
+                if wait(8000, || files_with("mp4").len() > before && !visible(w!("RengiSnapBar"))) {
+                    sleep(300);
+                    wn_file = files_with("mp4").pop();
+                }
+            }
+        } else {
+            rep.check("WN hotkey opens overlay", false, "");
+        }
+        for h in popup.iter().take(1) {
+            unsafe {
+                let _ = PostMessageW(Some(HWND(*h as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+        }
+        match wn_file.as_deref().map(|p| (p, inspect(p))) {
+            Some((path, Ok(i))) => {
+                rep.line(&format!("wn: {}x{} {} frames {:.2}s distinct {}", i.w, i.h, i.frames, i.seconds, i.distinct));
+                rep.check("WN video is the window's size", (i.w, i.h) == (ANIM.width() as u32, ANIM.height() as u32), &format!("{}x{}", i.w, i.h));
+                rep.check("WN minimized time is cut out", (2.6..=4.4).contains(&i.seconds), &format!("{:.2} s", i.seconds));
+                rep.check("WN the window animates in the video", i.distinct >= 5, &format!("{} distinct", i.distinct));
+                let fps = i.frames as f64 / i.seconds.max(0.1);
+                let at = |sec: f64| (sec * fps) as u32;
+                let fr = frames_at(path, &[at(0.5), at(1.2), at(2.1), at(3.0)]);
+                let green = |f: &Frame| f.pixels.chunks_exact(4).filter(|p| p[1] > 225 && p[0] < 40 && p[2] < 40).count();
+                let greens: Vec<usize> = fr.iter().flatten().map(green).collect();
+                rep.check("WN the popup on top is not in the video", greens.len() == 4 && greens.iter().all(|&g| g < 50), &format!("{greens:?}"));
+                for (k, f) in fr.iter().enumerate() {
+                    if let Some(f) = f {
+                        let _ = std::fs::write(rep.dir.join(format!("wn3-frame{k}.png")), f.encode_png());
+                    }
+                }
+                if let Some(f) = &fr[2] {
+                    // 480x240 into 320x240: 160 px tall picture, 40 px bars.
+                    let bar = (0..f.width() as i32).step_by(8).filter_map(|x| f.pixel(x, 12)).all(|p| p.iter().all(|&c| c < 24));
+                    let mid = f.pixel(f.width() as i32 / 2, f.height() as i32 / 2).unwrap_or([0, 0, 0]);
+                    rep.check("WN a wider window is fitted with bars", bar && mid.iter().any(|&c| c > 40), &format!("mid {mid:?}"));
+                }
+            }
+            Some((_, Err(e))) => rep.check("WN video decodes", false, &e),
+            None => rep.check("WN recording produced a file", false, ""),
+        }
+
         // HM: Home. A plain second launch (Start menu, Explorer) brings it up.
         let test_windows: Vec<HWND> = [w!("E2EPattern"), w!("E2ENested"), w!("E2EPainted"), w!("E2EAnim")].iter().filter_map(|c| find(*c)).collect();
         for h in &test_windows {
@@ -2015,8 +2162,6 @@ mod e2e {
         set_light_theme(started_light);
         sleep(500);
 
-        let scroll_after = unsafe { GetKeyState(VK_SCROLL.0 as i32) } & 1;
-        rep.check("Scroll Lock state never toggled", scroll_before == scroll_after, "");
         rep.check("app still running", matches!(app.try_wait(), Ok(None)), "");
 
         // Timing sample.

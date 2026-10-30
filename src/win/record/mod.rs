@@ -22,6 +22,9 @@ pub struct Params {
     pub monitor_rect: Rect,
     /// Desktop coords, even size, inside the monitor.
     pub region: Rect,
+    /// Record this window itself instead of the region (`region` is then
+    /// only its size and where the bar goes).
+    pub window: Option<isize>,
     pub plan: Plan,
     pub path: PathBuf,
     pub system_audio: bool,
@@ -38,6 +41,10 @@ pub struct Control {
     /// QPC time (100 ns) of video frame zero; 0 until recording starts.
     pub start_100ns: AtomicI64,
     pub paused_total_100ns: AtomicI64,
+    /// Paused by the recorder itself (the recorded window is minimized).
+    pub auto_paused: AtomicBool,
+    /// QPC time the current self-pause began (0 when none).
+    pub auto_since_100ns: AtomicI64,
 }
 
 pub struct Summary {
@@ -109,7 +116,8 @@ impl Recorder {
         if start == 0 {
             return 0.0;
         }
-        let end = self.paused_at.unwrap_or_else(audio::now_100ns);
+        let auto = self.ctrl.auto_since_100ns.load(Ordering::Acquire);
+        let end = self.paused_at.unwrap_or_else(|| if auto != 0 { auto } else { audio::now_100ns() });
         (end - start - self.ctrl.paused_total_100ns.load(Ordering::Acquire)).max(0) as f64 / 1e7
     }
 

@@ -338,7 +338,8 @@ impl App {
 
     fn panel_state(&self) -> PanelState {
         PanelState {
-            video: self.cfg.mode == "video",
+            video: self.cfg.mode != "photo",
+            window: self.cfg.mode == "window",
             fps_label: match self.cfg.video_fps {
                 0 => "Max fps".into(),
                 n => format!("{n} fps"),
@@ -402,7 +403,7 @@ impl App {
 
     fn finish(&mut self, rect: Rect) {
         if self.overlay.is_video() {
-            self.start_recording(rect);
+            self.start_recording(rect, None);
             return;
         }
         let items = self.overlay.take_items(rect);
@@ -621,7 +622,9 @@ impl App {
         self.save_config();
     }
 
-    fn start_recording(&mut self, rect: Rect) {
+    /// Records `rect` of the screen, or the window `window` itself (then
+    /// `rect` is where it is now).
+    fn start_recording(&mut self, rect: Rect, window: Option<isize>) {
         let full = self.end_overlay();
         let (monitor, mon_rect) = unsafe {
             use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect};
@@ -638,13 +641,16 @@ impl App {
             0 => record::refresh_rate(monitor),
             n => n,
         };
-        let plan = videoplan::plan(region.width() as u32, region.height() as u32, fps, Res::parse(&self.cfg.video_res), record::hevc_available());
+        // A window keeps its own full size (it may hang off the monitor).
+        let size = if window.is_some() { videoplan::even_rect(rect) } else { region };
+        let plan = videoplan::plan(size.width() as u32, size.height() as u32, fps, Res::parse(&self.cfg.video_res), record::hevc_available());
         let folder = self.current_folder();
         let name = crate::config::stamped_name("Video", "mp4", paths::local_stamp(), |n| folder.join(n).exists());
         let params = record::Params {
             monitor,
             monitor_rect: mon_rect,
-            region,
+            region: size,
+            window,
             plan,
             path: folder.join(name),
             system_audio: self.cfg.system_audio,
@@ -953,11 +959,14 @@ fn on_overlay_event(ev: overlay::Event) {
         overlay::Event::Style(c, w) => {
             with_app(|a| a.remember_style(None, c, w));
         }
-        overlay::Event::Mode(video) => {
+        overlay::Event::Mode(mode) => {
             with_app(|a| {
-                a.cfg.mode = if video { "video" } else { "photo" }.into();
+                a.cfg.mode = mode.into();
                 a.refresh_panel();
             });
+        }
+        overlay::Event::RecordWindow(hwnd, rect) => {
+            with_app(|a| a.start_recording(rect, Some(hwnd)));
         }
         overlay::Event::ToggleSound => {
             with_app(|a| {
@@ -1360,7 +1369,11 @@ unsafe extern "system" fn msg_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             }
             with_app(|a| {
                 if let Some(video) = a.pending_capture.take() {
-                    let mode = if video { "video" } else { "photo" };
+                    let mode = match (video, a.cfg.mode.as_str()) {
+                        (false, _) => "photo",
+                        (true, "window") => "window",
+                        _ => "video",
+                    };
                     if a.cfg.mode != mode {
                         a.cfg.mode = mode.into();
                         a.save_config();

@@ -11,7 +11,7 @@ pub const VK_SCROLL: u32 = 0x91;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Hotkey {
-    /// Windows virtual-key code. Default: Scroll Lock (0x91 = 145).
+    /// Windows virtual-key code. Default: S with Alt+Shift.
     pub key: u32,
     pub ctrl: bool,
     pub alt: bool,
@@ -21,7 +21,7 @@ pub struct Hotkey {
 
 impl Default for Hotkey {
     fn default() -> Self {
-        Self { key: VK_SCROLL, ctrl: false, alt: false, shift: false, win: false }
+        Self { key: b'S' as u32, ctrl: false, alt: true, shift: true, win: false }
     }
 }
 
@@ -56,7 +56,7 @@ impl Hotkey {
     /// The shortcuts Home offers.
     pub fn presets() -> Vec<Hotkey> {
         let k = |key: u32, ctrl: bool, alt: bool, shift: bool| Hotkey { key, ctrl, alt, shift, win: false };
-        vec![k(VK_SCROLL, false, false, false), k(0x2C, false, false, false), k(b'S' as u32, true, false, true), k(b'X' as u32, true, false, true), k(b'S' as u32, true, true, false)]
+        vec![k(b'S' as u32, false, true, true), k(b'S' as u32, true, false, true), k(b'X' as u32, true, false, true), k(b'S' as u32, true, true, false), k(0x2C, false, false, false)]
     }
 }
 
@@ -74,7 +74,7 @@ pub struct Config {
     pub recent_folders: Vec<String>,
     /// How long the preview card stays (seconds). 0 = until closed.
     pub card_seconds: u32,
-    /// "photo" or "video": the panel mode used last.
+    /// "photo", "video" or "window": the panel mode used last.
     pub mode: String,
     /// 30, 60, 120, or 0 = the monitor's refresh rate.
     pub video_fps: u32,
@@ -150,7 +150,9 @@ impl Config {
     }
 
     fn sanitize(&mut self) {
-        if self.hotkey.key == 0 || self.hotkey.key > 0xFE {
+        // Scroll Lock was the old default; it is gone, the left hand now does it.
+        let scroll_lock = self.hotkey.key == VK_SCROLL && !(self.hotkey.ctrl || self.hotkey.alt || self.hotkey.shift || self.hotkey.win);
+        if self.hotkey.key == 0 || self.hotkey.key > 0xFE || scroll_lock {
             self.hotkey = Hotkey::default();
         }
         if self.card_seconds > 600 {
@@ -160,7 +162,7 @@ impl Config {
         if self.ed_width > 2 {
             self.ed_width = 1;
         }
-        if self.mode != "video" {
+        if self.mode != "video" && self.mode != "window" {
             self.mode = "photo".into();
         }
         if ![0, 30, 60, 120].contains(&self.video_fps) {
@@ -228,7 +230,7 @@ mod tests {
     fn defaults_round_trip() {
         let c = Config::default();
         assert_eq!(Config::parse(&c.to_text()), c);
-        assert_eq!(c.hotkey.key, VK_SCROLL);
+        assert_eq!(c.hotkey.label(), "Alt+Shift+S");
         assert!(c.loupe);
     }
 
@@ -236,6 +238,7 @@ mod tests {
     fn video_settings() {
         let c = Config::parse("mode = \"video\"\nvideo_fps = 120\nvideo_res = \"720p\"\nmic = true");
         assert_eq!((c.mode.as_str(), c.video_fps, c.video_res.as_str(), c.mic), ("video", 120, "720p", true));
+        assert_eq!(Config::parse("mode = \"window\"").mode, "window");
         let c = Config::parse("mode = \"x\"\nvideo_fps = 7\nvideo_res = \"8k\"");
         assert_eq!((c.mode.as_str(), c.video_fps, c.video_res.as_str()), ("photo", 60, "original"));
     }
@@ -279,11 +282,20 @@ mod tests {
     }
 
     #[test]
+    fn scroll_lock_moves_to_the_new_default() {
+        // Old configs always wrote the whole table.
+        let old = "[hotkey]\nkey = 145\nctrl = false\nalt = false\nshift = false\nwin = false";
+        assert_eq!(Config::parse(old).hotkey, Hotkey::default());
+        let c = Config::parse("[hotkey]\nkey = 145\nctrl = true\nalt = false\nshift = false\nwin = false");
+        assert_eq!(c.hotkey.label(), "Ctrl+Scroll Lock");
+    }
+
+    #[test]
     fn hotkey_labels() {
-        assert_eq!(Hotkey::default().label(), "Scroll Lock");
+        assert_eq!(Hotkey::default().label(), "Alt+Shift+S");
         let p = Hotkey::presets();
         let labels: Vec<String> = p.iter().map(|h| h.label()).collect();
-        assert_eq!(labels, ["Scroll Lock", "Print Screen", "Ctrl+Shift+S", "Ctrl+Shift+X", "Ctrl+Alt+S"]);
+        assert_eq!(labels, ["Alt+Shift+S", "Ctrl+Shift+S", "Ctrl+Shift+X", "Ctrl+Alt+S", "Print Screen"]);
         assert_eq!(Hotkey { key: 0x77, ctrl: false, alt: false, shift: false, win: true }.label(), "Win+F8");
     }
 }

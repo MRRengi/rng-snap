@@ -33,6 +33,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 pub enum PanelItem {
     Photo,
     Video,
+    Window,
     Fps,
     Res,
     Sound,
@@ -45,7 +46,7 @@ impl PanelItem {
     /// Items in the same group sit together; a separator goes between groups.
     fn group(&self) -> u8 {
         match self {
-            PanelItem::Photo | PanelItem::Video => 0,
+            PanelItem::Photo | PanelItem::Video | PanelItem::Window => 0,
             PanelItem::Fps | PanelItem::Res | PanelItem::Sound | PanelItem::Mic => 1,
             PanelItem::Folder => 2,
             PanelItem::Close => 3,
@@ -56,7 +57,10 @@ impl PanelItem {
 /// What the panel shows; owned by the app.
 #[derive(Clone, Debug, Default)]
 pub struct PanelState {
+    /// Video or Window mode (video options on the panel, red frame).
     pub video: bool,
+    /// Window mode: hover picks whole windows, a click records that window.
+    pub window: bool,
     pub fps_label: String,
     pub res_label: String,
     pub sound: bool,
@@ -69,7 +73,10 @@ pub enum Event {
     CopyColor(String),
     /// Open the folder dropdown at this desktop point.
     FolderMenu(Point),
-    Mode(bool),
+    /// "photo", "video" or "window".
+    Mode(&'static str),
+    /// Record this window itself (raw HWND, its rect now).
+    RecordWindow(isize, Rect),
     FpsMenu(Point),
     ResMenu(Point),
     ToggleSound,
@@ -155,6 +162,8 @@ pub struct Overlay {
     panel_hover: Option<PanelItem>,
     panel_press: Option<PanelItem>,
     blur: Blur,
+    /// Window mode: index into `windows` under the cursor.
+    win_hover: Option<usize>,
 }
 
 fn monitor_at(p: Point) -> (Rect, f32) {
@@ -213,6 +222,7 @@ impl Overlay {
             panel_hover: None,
             panel_press: None,
             blur: Blur::default(),
+            win_hover: None,
         })
     }
 
@@ -271,6 +281,7 @@ impl Overlay {
         self.windows = windows.iter().map(|(h, r)| (*h, r.intersect(&vd))).filter(|(_, r)| !r.is_empty()).collect();
         let mut sel = Selection::new(vd, self.windows.iter().map(|w| w.1).collect(), monitors, tol);
         sel.mouse_move(cursor);
+        self.win_hover = self.window_at(cursor);
         self.sel = Some(sel);
         self.capture += 1;
         self.asked = None;
@@ -296,6 +307,78 @@ impl Overlay {
             force_foreground(self.hwnd);
         }
         true
+    }
+
+    /// Window mode: the topmost window under `p`.
+    fn window_at(&self, p: Point) -> Option<usize> {
+        self.windows.iter().position(|(_, r)| r.contains(p))
+    }
+
+    /// The frame colour: blue for a screenshot, red when it will be a video.
+    fn mode_color(&self) -> crate::palette::Rgba {
+        let p = theme::pal();
+        if self.state.video { p.red } else { p.accent }
+    }
+
+    /// Window mode input: hover picks whole windows, a click records one.
+    fn window_mode_handle(&mut self, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<(Option<LRESULT>, Option<Event>)> {
+        match msg {
+            WM_MOUSEMOVE => {
+                let p = self.to_desktop(lparam_point(lp.0));
+                let hover = self.panel_item_at(p);
+                let w = if hover.is_none() { self.window_at(p) } else { None };
+                if hover != self.panel_hover || w != self.win_hover {
+                    self.panel_hover = hover;
+                    self.win_hover = w;
+                    self.invalidate();
+                }
+                if let Some(sel) = self.sel.as_mut() {
+                    sel.mouse_move(p);
+                }
+                Some((Some(LRESULT(0)), None))
+            }
+            WM_LBUTTONDOWN => {
+                let p = self.to_desktop(lparam_point(lp.0));
+                unsafe {
+                    SetCapture(self.hwnd);
+                }
+                if let Some(item) = self.panel_item_at(p) {
+                    self.panel_press = Some(item);
+                    self.invalidate();
+                }
+                Some((Some(LRESULT(0)), None))
+            }
+            WM_LBUTTONUP => {
+                let p = self.to_desktop(lparam_point(lp.0));
+                unsafe {
+                    let _ = ReleaseCapture();
+                }
+                if let Some(pressed) = self.panel_press.take() {
+                    self.invalidate();
+                    let ev = (self.panel_item_at(p) == Some(pressed)).then(|| self.panel_click(pressed)).flatten();
+                    return Some((Some(LRESULT(0)), ev));
+                }
+                if self.panel_rect.contains(p) {
+                    return Some((Some(LRESULT(0)), None));
+                }
+                let ev = self.window_at(p).map(|i| Event::RecordWindow(self.windows[i].0, self.windows[i].1));
+                Some((Some(LRESULT(0)), ev))
+            }
+            WM_LBUTTONDBLCLK | WM_MOUSEWHEEL => Some((Some(LRESULT(0)), None)),
+            WM_APP_ELEMENTS => {
+                let _ = self.elements.take();
+                Some((Some(LRESULT(0)), None))
+            }
+            WM_APP_KEY => {
+                let ev = match VIRTUAL_KEY(wp.0 as u16) {
+                    VK_ESCAPE => Some(Event::Cancel),
+                    VK_RETURN => self.win_hover.map(|i| Event::RecordWindow(self.windows[i].0, self.windows[i].1)),
+                    _ => None,
+                };
+                Some((Some(LRESULT(0)), ev))
+            }
+            _ => None,
+        }
     }
 
     /// Sends the point to the element worker (latest query wins there).
@@ -345,7 +428,7 @@ impl Overlay {
         let seg = |label: &str| side * 2 + icon_w + gap + text_w(label);
         let drop = |label: &str| side * 2 + icon_w + gap * 2 + text_w(label) + side;
         let square = h - pad * 2;
-        let mut items = vec![(PanelItem::Photo, seg("Photo")), (PanelItem::Video, seg("Video"))];
+        let mut items = vec![(PanelItem::Photo, seg("Photo")), (PanelItem::Video, seg("Video")), (PanelItem::Window, seg("Window"))];
         if self.state.video {
             let fps_w = side * 2 + text_w(&self.state.fps_label) + gap + side;
             let res_w = side * 2 + text_w(&self.state.res_label) + gap + side;
@@ -397,6 +480,11 @@ impl Overlay {
         }
         if self.quick.is_some() {
             if let Some(r) = self.quick_handle(msg, wp, lp) {
+                return r;
+            }
+        }
+        if self.state.window && self.quick.is_none() {
+            if let Some(r) = self.window_mode_handle(msg, wp, lp) {
                 return r;
             }
         }
@@ -880,8 +968,9 @@ impl Overlay {
             Some(Point::new(r.left, me.panel_rect.bottom + (4.0 * me.scale) as i32))
         };
         match item {
-            PanelItem::Photo => (self.state.video).then_some(Event::Mode(false)),
-            PanelItem::Video => (!self.state.video).then_some(Event::Mode(true)),
+            PanelItem::Photo => (self.state.video).then_some(Event::Mode("photo")),
+            PanelItem::Video => (!self.state.video || self.state.window).then_some(Event::Mode("video")),
+            PanelItem::Window => (!self.state.window).then_some(Event::Mode("window")),
             PanelItem::Close => Some(Event::Cancel),
             PanelItem::Folder => below(self, item).map(Event::FolderMenu),
             PanelItem::Fps => below(self, item).map(Event::FpsMenu),
@@ -946,15 +1035,22 @@ impl Overlay {
         let fonts = &fonts;
         let s = self.scale;
         let p = theme::pal();
-        let view = sel.view();
+        let mut view = sel.view();
         let pos = sel.pos();
+        if self.state.window {
+            // Window mode: the hovered window, drawn as a suggestion.
+            view.frame = self.win_hover.map(|i| self.windows[i].1);
+            view.suggestion = true;
+            view.editing = false;
+        }
+        let mode_color = self.mode_color();
         let full = rect_f(0.0, 0.0, self.vd.width() as f32, self.vd.height() as f32);
         let rt1: &ID2D1RenderTarget = &rt;
         unsafe {
             rt.BeginDraw();
             rt.DrawBitmap(&bmp, Some(&full), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None);
             let dim = d2d::brush(rt1, rgba(0x000000, 0.45)).ok();
-            let accent = theme::brush(rt1, p.accent);
+            let accent = theme::brush(rt1, mode_color);
             let white = d2d::brush(rt1, rgba(0xFFFFFF, 1.0)).ok();
             if let Some(dim) = &dim {
                 match view.frame {
@@ -1019,13 +1115,13 @@ impl Overlay {
                         }
                     }
                 }
-                if !view.suggestion {
+                if !view.suggestion || self.state.window {
                     self.draw_size_label(rt1, fonts, f, fr, back.as_ref());
                 }
             }
             self.draw_panel(rt1, fonts, back.as_ref());
             self.draw_quick(rt1, back.as_ref());
-            if self.loupe && self.quick.is_none() && !self.panel_rect.contains(pos) {
+            if self.loupe && self.quick.is_none() && !self.state.window && !self.panel_rect.contains(pos) {
                 self.draw_loupe(rt1, &bmp, fonts, pos, view.frame, back.as_ref());
             }
             let _ = rt.EndDraw(None, None);
@@ -1038,7 +1134,8 @@ impl Overlay {
         let p = theme::pal();
         let text = format!("{} \u{00D7} {}", fr.width(), fr.height());
         let h = 26.0 * s;
-        let w = gfx.measure(&fonts.label, &text) + 22.0 * s;
+        let dot = 14.0 * s;
+        let w = gfx.measure(&fonts.label, &text) + 22.0 * s + dot;
         let mut top = f.top - h - 8.0 * s;
         if top < (self.monitor.top - self.vd.top) as f32 + 4.0 * s {
             top = f.top + 8.0 * s;
@@ -1046,8 +1143,13 @@ impl Overlay {
         let left = f.left.max((self.monitor.left - self.vd.left) as f32 + 4.0 * s);
         let r = rect_f(left, top, left + w, top + h);
         theme::glass(rt, gfx, r, h / 2.0, s, back);
+        // Mode dot: blue = screenshot, red = video.
+        if let Some(c) = theme::brush(rt, self.mode_color()) {
+            let e = D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: r.left + 14.0 * s, Y: (r.top + r.bottom) / 2.0 }, radiusX: 4.0 * s, radiusY: 4.0 * s };
+            unsafe { rt.FillEllipse(&e, &c) };
+        }
         if let Some(fg) = theme::brush(rt, p.label) {
-            d2d::draw_text(rt, &fonts.label, &text, rect_f(r.left + 11.0 * s, r.top + 4.5 * s, r.right, r.bottom), &fg);
+            d2d::draw_text(rt, &fonts.label, &text, rect_f(r.left + 11.0 * s + dot, r.top + 4.5 * s, r.right, r.bottom), &fg);
         }
     }
 
@@ -1090,7 +1192,8 @@ impl Overlay {
             prev = Some(item.group());
             let selected = match item {
                 PanelItem::Photo => !self.state.video,
-                PanelItem::Video => self.state.video,
+                PanelItem::Video => self.state.video && !self.state.window,
+                PanelItem::Window => self.state.window,
                 _ => false,
             };
             let pressed = self.panel_press == Some(*item);
@@ -1142,9 +1245,10 @@ impl Overlay {
             let (glyph, label) = match item {
                 PanelItem::Photo => ("\u{E722}", "Photo"),
                 PanelItem::Video => ("\u{E714}", "Video"),
+                PanelItem::Window => ("\u{E8A7}", "Window"),
                 _ => ("\u{E8B7}", self.folder_label.as_str()),
             };
-            let ink = if matches!(item, PanelItem::Photo | PanelItem::Video) && !selected { &fg2 } else { &fg };
+            let ink = if matches!(item, PanelItem::Photo | PanelItem::Video | PanelItem::Window) && !selected { &fg2 } else { &fg };
             let x0 = lr.left + 12.0 * s;
             d2d::draw_text(rt, &fonts.icon, glyph, rect_f(x0, lr.top, x0 + icon_w, lr.bottom), ink);
             let tx = x0 + icon_w + gap;

@@ -3,7 +3,7 @@
 //! timeline by their QPC timestamps and handed out as 16-bit PCM chunks.
 
 use super::Control;
-use crate::mixer::Mixer;
+use crate::mixer::{Mixer, Track};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
@@ -98,13 +98,20 @@ pub fn run(system: bool, mic: bool, ctrl: Arc<Control>, ready: mpsc::Sender<bool
     }
     let start = ctrl.start_100ns.load(Ordering::Acquire);
     let mut mixer = Mixer::new();
+    // One continuous track per source; resync past 20 ms of drift.
+    let mut tracks: Vec<Track> = sources.iter().map(|_| Track::new(RATE as i64 / 50)).collect();
+    let mut was_paused = false;
     let to_frames = |t: i64| -> i64 { (t as i128 * RATE as i128 / 10_000_000) as i64 };
     loop {
         let stopping = ctrl.stop.load(Ordering::Acquire);
-        let paused = ctrl.paused.load(Ordering::Acquire);
+        let paused = ctrl.paused.load(Ordering::Acquire) || ctrl.auto_paused.load(Ordering::Acquire);
+        if paused != was_paused {
+            tracks.iter_mut().for_each(Track::reset);
+            was_paused = paused;
+        }
         let paused_total = ctrl.paused_total_100ns.load(Ordering::Acquire);
         let muted = ctrl.mic_muted.load(Ordering::Acquire);
-        for s in &sources {
+        for (s, track) in sources.iter().zip(tracks.iter_mut()) {
             loop {
                 let n = unsafe { s.capture.GetNextPacketSize() }.unwrap_or(0);
                 if n == 0 {
@@ -118,10 +125,14 @@ pub fn run(system: bool, mic: bool, ctrl: Arc<Control>, ready: mpsc::Sender<bool
                     break;
                 }
                 let silent = flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
-                if !paused && !silent && !(s.is_mic && muted) && !data.is_null() {
-                    let samples = unsafe { std::slice::from_raw_parts(data as *const f32, frames as usize * 2) };
-                    let pos = to_frames(qpc as i64 - start - paused_total);
-                    mixer.add(pos, samples);
+                let broke = flags & (AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32) != 0;
+                if !paused {
+                    // Silent packets still move the track along.
+                    let pos = track.place(to_frames(qpc as i64 - start - paused_total), frames as usize, broke);
+                    if !silent && !(s.is_mic && muted) && !data.is_null() {
+                        let samples = unsafe { std::slice::from_raw_parts(data as *const f32, frames as usize * 2) };
+                        mixer.add(pos, samples);
+                    }
                 }
                 unsafe {
                     let _ = s.capture.ReleaseBuffer(frames);

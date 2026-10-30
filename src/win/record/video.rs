@@ -25,6 +25,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Threading::*;
+use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow};
 use windows::Win32::System::WinRT::Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess};
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::core::{HSTRING, Interface};
@@ -186,10 +187,15 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
         Err(e) => log(&format!("borderless request failed: {e}")),
     }
 
-    // Capture the monitor.
+    // Capture the monitor, or the window itself (nothing on top of it shows).
     let interop = w(windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>(), "capture interop")?;
-    let item: GraphicsCaptureItem = unsafe { w(interop.CreateForMonitor(HMONITOR(p.monitor as *mut _)), "capture item")? };
+    let item: GraphicsCaptureItem = match p.window {
+        Some(h) => unsafe { w(interop.CreateForWindow(HWND(h as *mut _)), "window capture item")? },
+        None => unsafe { w(interop.CreateForMonitor(HMONITOR(p.monitor as *mut _)), "capture item")? },
+    };
+    let window = p.window.map(|h| HWND(h as *mut _));
     let size = w(item.Size(), "item size")?;
+    let mut pool_size = size;
     let pool = w(Direct3D11CaptureFramePool::CreateFreeThreaded(&winrt_dev, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, size), "frame pool")?;
     let session: GraphicsCaptureSession = w(pool.CreateCaptureSession(&item), "session")?;
     let _ = session.SetIsCursorCaptureEnabled(true);
@@ -212,11 +218,16 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
         back: 1,
     };
     let bind = D3D11_BIND_FLAG(D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0);
-    let latest = texture(&dev, sw, sh, bind, D3D11_USAGE_DEFAULT, 0)?;
+    // Window mode: `latest` holds the window's content, whatever its size.
+    let (lw, lh) = if window.is_some() { (size.Width.max(2) as u32, size.Height.max(2) as u32) } else { (sw, sh) };
+    let mut latest = texture(&dev, lw, lh, bind, D3D11_USAGE_DEFAULT, 0)?;
+    let mut latest_size = (lw, lh);
+    let mut content = (lw, lh);
     let ring: Vec<ID3D11Texture2D> = (0..RING).map(|_| texture(&dev, ow, oh, bind, D3D11_USAGE_DEFAULT, 0)).collect::<Result<_, _>>()?;
 
-    // GPU scaler (only when the output is smaller than the region).
-    let scaling = (ow, oh) != (sw, sh);
+    // GPU scaler (when the output is smaller than the region, and always for
+    // a window, which can change size while recording).
+    let scaling = (ow, oh) != (sw, sh) || window.is_some();
     let mut scaler = None;
     if scaling {
         unsafe {
@@ -231,7 +242,7 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
                 colorContext: std::mem::ManuallyDrop::new(None),
             };
             let src_surface: IDXGISurface = w(latest.cast(), "surface")?;
-            let src = w(dc.CreateBitmapFromDxgiSurface(&src_surface, Some(&props(D2D1_BITMAP_OPTIONS_NONE))), "src bitmap")?;
+            let src = Some(w(dc.CreateBitmapFromDxgiSurface(&src_surface, Some(&props(D2D1_BITMAP_OPTIONS_NONE))), "src bitmap")?);
             let mut targets = Vec::new();
             for t in &ring {
                 let s: IDXGISurface = w(t.cast(), "surface")?;
@@ -288,27 +299,55 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
     unsafe { w(writer.BeginWriting(), "begin writing")? };
 
     // First frame (WGC sends one right away; give it a second).
-    let grab = |pool: &Direct3D11CaptureFramePool| -> bool {
+    // Returns whether a frame arrived and whether `latest` was replaced.
+    let grab = |pool: &Direct3D11CaptureFramePool, latest: &mut ID3D11Texture2D, latest_size: &mut (u32, u32), content: &mut (u32, u32), pool_size: &mut windows::Graphics::SizeInt32| -> (bool, bool) {
         let mut got = None;
         while let Ok(f) = pool.TryGetNextFrame() {
             got = Some(f);
         }
-        let Some(f) = got else { return false };
+        let Some(f) = got else { return (false, false) };
+        let mut replaced = false;
         let ok = (|| -> windows::core::Result<()> {
             let access: IDirect3DDxgiInterfaceAccess = f.Surface()?.cast()?;
             let tex: ID3D11Texture2D = unsafe { access.GetInterface()? };
-            unsafe { ctx.CopySubresourceRegion(&latest, 0, 0, 0, 0, &tex, 0, Some(&src_box)) };
+            if window.is_some() {
+                let cs = f.ContentSize()?;
+                if cs.Width > 0 && cs.Height > 0 && (cs.Width != pool_size.Width || cs.Height != pool_size.Height) {
+                    let _ = pool.Recreate(&winrt_dev, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, cs);
+                    *pool_size = cs;
+                }
+                let mut td = D3D11_TEXTURE2D_DESC::default();
+                unsafe { tex.GetDesc(&mut td) };
+                let cw = (cs.Width.max(1) as u32).min(td.Width);
+                let ch = (cs.Height.max(1) as u32).min(td.Height);
+                if cw > latest_size.0 || ch > latest_size.1 {
+                    let nw = cw.max(latest_size.0);
+                    let nh = ch.max(latest_size.1);
+                    if let Ok(t) = texture(&dev, nw, nh, bind, D3D11_USAGE_DEFAULT, 0) {
+                        *latest = t;
+                        *latest_size = (nw, nh);
+                        replaced = true;
+                    }
+                }
+                let cw = cw.min(latest_size.0);
+                let ch = ch.min(latest_size.1);
+                let b = D3D11_BOX { left: 0, top: 0, front: 0, right: cw, bottom: ch, back: 1 };
+                unsafe { ctx.CopySubresourceRegion(&*latest, 0, 0, 0, 0, &tex, 0, Some(&b)) };
+                *content = (cw, ch);
+            } else {
+                unsafe { ctx.CopySubresourceRegion(&*latest, 0, 0, 0, 0, &tex, 0, Some(&src_box)) };
+            }
             Ok(())
         })()
         .is_ok();
         let _ = f.Close();
-        ok
+        (ok, replaced)
     };
     let t0 = Instant::now();
-    while !grab(&pool) && t0.elapsed() < Duration::from_secs(1) {
+    while !grab(&pool, &mut latest, &mut latest_size, &mut content, &mut pool_size).0 && t0.elapsed() < Duration::from_secs(1) {
         std::thread::sleep(Duration::from_millis(2));
     }
-    let thumb = read_back(&dev, &ctx, &latest, sw, sh);
+    let thumb = read_back(&dev, &ctx, &latest, latest_size.0, latest_size.1).map(|f| if window.is_some() { f.crop(Rect::from_xywh(0, 0, content.0 as i32, content.1 as i32)) } else { f });
 
     let start = audio::now_100ns();
     ctrl.start_100ns.store(start, Ordering::Release);
@@ -316,6 +355,7 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
 
     let timer = unsafe { CreateWaitableTimerExW(None, None, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS.0) }.ok();
     let mut last_idx: i64 = -1;
+    let mut last_check = Instant::now();
     let mut frames = 0u64;
     let mut slot = 0usize;
     let mut fail = None;
@@ -330,11 +370,43 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
         if ctrl.stop.load(Ordering::Acquire) {
             break;
         }
-        grab(&pool);
+        let (_, replaced) = grab(&pool, &mut latest, &mut latest_size, &mut content, &mut pool_size);
+        if replaced {
+            // The window grew: point the scaler at the new texture.
+            if let Some((dc, src, _)) = &mut scaler {
+                *src = None;
+                if let Ok(surface) = latest.cast::<IDXGISurface>() {
+                    let props = D2D1_BITMAP_PROPERTIES1 {
+                        pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_IGNORE },
+                        dpiX: 96.0,
+                        dpiY: 96.0,
+                        bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
+                        colorContext: std::mem::ManuallyDrop::new(None),
+                    };
+                    *src = unsafe { dc.CreateBitmapFromDxgiSurface(&surface, Some(&props)) }.ok();
+                }
+            }
+        }
         while let Ok(c) = chunk_rx.try_recv() {
             write_audio(c);
         }
-        let paused = ctrl.paused.load(Ordering::Acquire);
+        // A minimized or closed window pauses the recording by itself.
+        if let Some(h) = window {
+            if last_check.elapsed() > Duration::from_millis(100) {
+                last_check = Instant::now();
+                let gone = unsafe { !IsWindow(Some(h)).as_bool() || IsIconic(h).as_bool() };
+                let auto = ctrl.auto_paused.load(Ordering::Acquire);
+                if gone && !auto {
+                    ctrl.auto_since_100ns.store(audio::now_100ns(), Ordering::Release);
+                    ctrl.auto_paused.store(true, Ordering::Release);
+                } else if !gone && auto {
+                    let since = ctrl.auto_since_100ns.swap(0, Ordering::AcqRel);
+                    ctrl.paused_total_100ns.fetch_add(audio::now_100ns() - since, Ordering::AcqRel);
+                    ctrl.auto_paused.store(false, Ordering::Release);
+                }
+            }
+        }
+        let paused = ctrl.paused.load(Ordering::Acquire) || ctrl.auto_paused.load(Ordering::Acquire);
         let paused_total = ctrl.paused_total_100ns.load(Ordering::Acquire);
         let now = audio::now_100ns();
         if !paused {
@@ -343,12 +415,24 @@ fn record(p: &Params, ctrl: &Arc<Control>, ready: &mpsc::Sender<Result<(), Strin
             if idx > last_idx {
                 let target = &ring[slot];
                 match &scaler {
-                    Some((dc, src, targets)) => unsafe {
+                    Some((dc, Some(src), targets)) => unsafe {
                         dc.SetTarget(&targets[slot]);
                         dc.BeginDraw();
-                        dc.DrawBitmap(src, Some(&D2D_RECT_F { left: 0.0, top: 0.0, right: ow as f32, bottom: oh as f32 }), 1.0, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, None, None);
+                        if window.is_some() {
+                            // Aspect-fit the window into the fixed frame.
+                            let (cw, ch) = (content.0 as f32, content.1 as f32);
+                            let k = (ow as f32 / cw).min(oh as f32 / ch);
+                            let (dw, dh) = (cw * k, ch * k);
+                            let (x, y) = (((ow as f32 - dw) / 2.0).round(), ((oh as f32 - dh) / 2.0).round());
+                            dc.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }));
+                            let srect = D2D_RECT_F { left: 0.0, top: 0.0, right: cw, bottom: ch };
+                            dc.DrawBitmap(src, Some(&D2D_RECT_F { left: x, top: y, right: x + dw, bottom: y + dh }), 1.0, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, Some(&srect), None);
+                        } else {
+                            dc.DrawBitmap(src, Some(&D2D_RECT_F { left: 0.0, top: 0.0, right: ow as f32, bottom: oh as f32 }), 1.0, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, None, None);
+                        }
                         let _ = dc.EndDraw(None, None);
                     },
+                    Some((_, None, _)) => {}
                     None => unsafe { ctx.CopyResource(target, &latest) },
                 }
                 let t = (idx as i128 * 10_000_000 / fps as i128) as i64;

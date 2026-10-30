@@ -1,5 +1,5 @@
 //! Low-level keyboard hook. Catches the capture hotkey even when another app
-//! registered it and swallows it (so Scroll Lock never toggles). While the
+//! registered it and swallows it (so the app underneath never sees it). While the
 //! overlay is open it also routes the overlay keys there, because a
 //! background process is not always allowed to take keyboard focus.
 //!
@@ -65,6 +65,19 @@ fn overlay_key(vk: u32) -> bool {
     [VK_ESCAPE, VK_RETURN, VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_C].iter().any(|k| k.0 as u32 == vk)
 }
 
+/// One unassigned key press. Sent after swallowing a hotkey with Alt or Win
+/// in it: releasing Alt alone would open the menu bar of the app underneath
+/// (and Alt+Shift would switch the keyboard layout, Win the Start menu).
+fn mask_modifier_release() {
+    let ev = |up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(0xE8), dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, ..Default::default() } },
+    };
+    unsafe {
+        SendInput(&[ev(false), ev(true)], size_of::<INPUT>() as i32);
+    }
+}
+
 fn post(target: isize, msg: u32, wp: usize, lp: isize) {
     unsafe {
         let _ = PostMessageW(Some(HWND(target as *mut _)), msg, WPARAM(wp), LPARAM(lp));
@@ -89,6 +102,9 @@ unsafe extern "system" fn proc_(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     if fresh {
                         if overlay == 0 {
                             post(TARGET.load(Ordering::Acquire), WM_APP_CAPTURE, 0, 0);
+                        }
+                        if h.alt || h.win {
+                            mask_modifier_release();
                         }
                     }
                     DOWN_SINCE.with(|d| d.set(Some(Instant::now())));
