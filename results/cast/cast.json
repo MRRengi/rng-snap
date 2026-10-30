@@ -1,0 +1,44 @@
+[
+ {
+  "file": "male-0-LukeC.mp3",
+  "gender": "male",
+  "name": "Luke C",
+  "voice_id": "vrzf30JViL81pJHyaGSU",
+  "desc": "Witty, upbeat, contemporary American male, perfect for Social Media."
+ },
+ {
+  "file": "male-1-SkylarViralZillennia.mp3",
+  "gender": "male",
+  "name": "Skylar - Viral Zillennial Voice",
+  "voice_id": "MeDfWn0QGAwSljXBLc2G",
+  "desc": "A modern, internet-native zillennial male voice designed for viral short-form content. Crisp, punchy, and highly intelligible with a confident \u201ctalking-to-camer"
+ },
+ {
+  "file": "female-2-SirenNaturalrealisti.mp3",
+  "gender": "female",
+  "name": "Siren - Natural realistic conversational voice",
+  "voice_id": "eXpIbVcVbLo8ZJQDlDnl",
+  "desc": "This voice is perfect for podcasts, videos, social media, commercials...really ANYTHING where you need a hyper-realistic voice that sounds so chill and natural,"
+ },
+ {
+  "file": "female-3-SunnyBubblyChildrenN.mp3",
+  "gender": "female",
+  "name": "Sunny - Bubbly, Children Narrator ",
+  "voice_id": "FgiNpTIapnCbaD6xiqIo",
+  "desc": "For children's toy roleplay, unboxing videos, dollhouse play, pretend play, slime tutorials, etc. Great for big expressive reactions and imaginative storytellin"
+ },
+ {
+  "file": "male-4-designedmale.mp3",
+  "gender": "male",
+  "name": "designed male",
+  "voice_id": "XnyqL5AF2EduT8GmhTOW",
+  "desc": "A real tech YouTuber in his late twenties, American, talking to his phone camera. Fast, playful and self-ironic, with na"
+ },
+ {
+  "file": "female-5-designedfemale.mp3",
+  "gender": "female",
+  "name": "designed female",
+  "voice_id": "vcVmL1BaHNMrMMjU78vh",
+  "desc": "A real tech content creator in her late twenties, American, talking straight to camera. Quick, witty and warm, a little "
+ }
+]

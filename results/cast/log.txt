@@ -1,0 +1,8 @@
+male: 30 found: Luke C, Skylar - Viral Zillennial Voice, Dylan Malc – Authentic Social Voice, Akira - Bright, Warm, Clear & Friendly, PJ - Casual Young Storyteller, Joey - Upbeat Popular News Host, Kerim - English, Smooth, Social Media, Kyle - Bright, Active, Commercial
+female: 30 found: Siren - Natural realistic conversational voice, Sunny - Bubbly, Children Narrator , Genevieve - Warm & Expressive, Jessica Anne Bogart - Social Media & Pods, Brielle - Podcast girl extremely natural, Aaliyah - Urban & Confident, Fiona - chill, natural & Real, Laura - Enthusiast, Quirky
+ok male-0-LukeC.mp3
+ok male-1-SkylarViralZillennia.mp3
+ok female-2-SirenNaturalrealisti.mp3
+ok female-3-SunnyBubblyChildrenN.mp3
+ok male-4-designedmale.mp3
+ok female-5-designedfemale.mp3
