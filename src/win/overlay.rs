@@ -174,7 +174,7 @@ impl Overlay {
             CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
                 class_name::OVERLAY,
-                windows::core::w!("Rengi Snap"),
+                windows::core::w!("Snap"),
                 WS_POPUP,
                 0,
                 0,

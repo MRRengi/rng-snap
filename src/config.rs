@@ -1,4 +1,4 @@
-//! Settings stored in `%APPDATA%\Rengi Snap\config.toml`. Any bad or missing
+//! Settings stored in `%APPDATA%\Snap\config.toml`. Any bad or missing
 //! value falls back to its default; the app never refuses to start over config.
 
 use serde::{Deserialize, Serialize};
@@ -68,7 +68,7 @@ pub struct Config {
     pub loupe: bool,
     /// Also save every capture to `folder` as PNG.
     pub auto_save: bool,
-    /// Save folder. Empty = `Pictures\Rengi Snap`.
+    /// Save folder. Empty = `Pictures\Snap`.
     pub folder: String,
     /// Most recent first.
     pub recent_folders: Vec<String>,
@@ -194,7 +194,7 @@ impl Config {
     /// The folder to save into, given the user's Pictures folder.
     pub fn save_folder(&self, pictures: &Path) -> PathBuf {
         if self.folder.trim().is_empty() {
-            pictures.join("Rengi Snap")
+            pictures.join("Snap")
         } else {
             PathBuf::from(&self.folder)
         }
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn save_folder_default() {
         let c = Config::default();
-        assert_eq!(c.save_folder(Path::new("P")), Path::new("P").join("Rengi Snap"));
+        assert_eq!(c.save_folder(Path::new("P")), Path::new("P").join("Snap"));
     }
 
     #[test]

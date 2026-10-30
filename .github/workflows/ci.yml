@@ -1,7 +1,7 @@
 name: ci
 on:
   push:
-    branches: [main]
+    branches: [main, rename]
   workflow_dispatch:
 
 permissions:
@@ -27,21 +27,23 @@ jobs:
       - name: End-to-end test on the runner desktop
         shell: pwsh
         run: |
-          ./target/release/e2e.exe ./target/release/RengiSnap.exe results 2>&1 | Tee-Object results/e2e-console.txt
+          ./target/release/e2e.exe ./target/release/Snap.exe results 2>&1 | Tee-Object results/e2e-console.txt
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Build setup and portable zip
         shell: pwsh
         run: ./installer/build.ps1 2>&1 | Tee-Object results/installer-build.txt
       - name: Installer test
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: ./installer/test.ps1 results
       - name: Upload builds
         uses: actions/upload-artifact@v4
         with:
-          name: RengiSnap
+          name: Snap
           path: |
-            target/installer/RengiSnap-Setup-*.exe
-            target/installer/RengiSnap-*-portable.zip
+            target/installer/Snap-Setup-*.exe
+            target/installer/Snap-*-portable.zip
       - name: Check for a new version
         id: ver
         if: github.ref == 'refs/heads/main'
@@ -61,11 +63,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
-          name: Snap by rng ${{ steps.ver.outputs.version }}
+          name: Snap ${{ steps.ver.outputs.version }}
           target_commitish: ${{ github.sha }}
           files: |
-            target/installer/RengiSnap-Setup-*.exe
-            target/installer/RengiSnap-*-portable.zip
+            target/installer/Snap-Setup-*.exe
+            target/installer/Snap-*-portable.zip
           body_path: docs/release-notes.md
       - name: Publish results branch
         if: always()
@@ -73,7 +75,7 @@ jobs:
         run: |
           if (Test-Path results/home/log.txt) { Copy-Item results/home/log.txt results/app-log.txt }
           if (Test-Path results/home) { Remove-Item -Recurse -Force results/home }
-          if (Test-Path target/release/RengiSnap.exe) { Copy-Item target/release/RengiSnap.exe results/ }
+          if (Test-Path target/release/Snap.exe) { Copy-Item target/release/Snap.exe results/ }
           Get-ChildItem target/installer -File -ErrorAction SilentlyContinue | Copy-Item -Destination results/
           if (Test-Path results/inst-home) { Remove-Item -Recurse -Force results/inst-home }
           "${{ github.sha }} run ${{ github.run_number }} ${{ job.status }}" | Out-File results/run.txt

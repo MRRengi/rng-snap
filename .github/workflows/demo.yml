@@ -16,7 +16,7 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          cargo build --release --bin RengiSnap --bin demo
+          cargo build --release --bin Snap --bin demo
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: ffmpeg
         shell: pwsh
@@ -34,7 +34,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force results/demo | Out-Null
-          ./target/release/demo.exe ./target/release/RengiSnap.exe demo/page.html demo/wallpaper.jpg results/demo 2>&1 | Tee-Object results/demo/console.txt
+          ./target/release/demo.exe ./target/release/Snap.exe demo/page.html demo/wallpaper.jpg results/demo 2>&1 | Tee-Object results/demo/console.txt
           $global:LASTEXITCODE = 0
       - name: Compress
         shell: pwsh
@@ -43,7 +43,7 @@ jobs:
             ffmpeg -y -loglevel error -i results/demo/raw.mp4 -c:v libx264 -preset slow -crf 17 -pix_fmt yuv420p results/demo/demo-raw.mp4
             Remove-Item results/demo/raw.mp4
           }
-          $pics = Join-Path $env:USERPROFILE "Pictures\Rengi Snap"
+          $pics = Join-Path $env:USERPROFILE "Pictures\Snap"
           if (Test-Path $pics) { Get-ChildItem $pics -Include *.gif,*.mp4 -Recurse | Copy-Item -Destination results/demo/ }
           if (Test-Path results/demo/home/log.txt) { Copy-Item results/demo/home/log.txt results/demo/app-log.txt }
           Remove-Item -Recurse -Force results/demo/home, results/demo/chrome-profile -ErrorAction SilentlyContinue

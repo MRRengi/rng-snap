@@ -10,8 +10,8 @@
 - Design skills used as the bar: apple-design (HIG, Liquid Glass rules), emil-design-eng (motion and polish), impeccable, design-taste-frontend.
 
 ## Install
-- **Setup** (`RengiSnap-Setup-<ver>.exe`, Inno Setup 6):
-  - Per-user by default, no admin prompt. Installs to `%LOCALAPPDATA%\Programs\Rengi Snap`. Can install for all users from the dialog.
+- **Setup** (`Snap-Setup-<ver>.exe`, Inno Setup 6):
+  - Per-user by default, no admin prompt. Installs to `%LOCALAPPDATA%\Programs\Snap`. Can install for all users from the dialog.
   - Adds a Start menu shortcut.
   - Optional tasks:
     - Desktop icon (off by default).
@@ -19,8 +19,8 @@
     - **"Open with Snap"** for `.mp4` and `.png` (on).
   - Finish page: "Launch Snap" (opens the Home window).
   - Updating over an old version and uninstalling close the running app first (`--quit`). Uninstall removes the autostart value and the "Open with" keys. Captures and settings stay.
-- **Portable zip** (`RengiSnap-<ver>-portable.zip`): the exe plus a short read-me.
-- **Exe resources**: the app icon (16-256 px, drawn by `src/icon.rs`) and version info ("Snap by rng"), so Explorer, the taskbar, Task Manager and the installer all show the right name and icon.
+- **Portable zip** (`Snap-<ver>-portable.zip`): the exe plus a short read-me.
+- **Exe resources**: the app icon (16-256 px, drawn by `src/icon.rs`) and version info ("Snap"), so Explorer, the taskbar, Task Manager and the installer all show the right name and icon.
   - `build.rs` writes a `.res` file and hands it to the MSVC linker. No resource compiler or extra crate is needed.
 - **CI** builds the setup and the zip, tests them, and attaches both to the GitHub release.
 
@@ -61,7 +61,7 @@
   - When the exe or the Start menu shortcut is opened again.
 - Closing it hides it. The app keeps running in the tray, and the footer says so.
 - **Layout** (Mica window, glass cards):
-  - **Header**: the app icon, "Snap" and "by rng".
+  - **Header**: the app icon, "Snap" and .
   - **Three action tiles**, each with its key shown as a keycap:
     - **Screenshot** - Scroll Lock.
     - **Record video** - opens the overlay already in Video mode.

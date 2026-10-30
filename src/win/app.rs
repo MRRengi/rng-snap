@@ -157,6 +157,7 @@ pub fn run() {
     register_classes(instance);
 
     let (cfg, cfg_path, first_run) = load_config();
+    migrate_pictures(&cfg);
     if first_run && std::env::var_os("RENGI_SNAP_NO_AUTOSTART").is_none() && !files::installer_chose_autostart() {
         files::set_autostart(true);
     }
@@ -291,6 +292,18 @@ fn register_classes(instance: HINSTANCE) {
             };
             RegisterClassExW(&wc);
         }
+    }
+}
+
+/// Captures saved under the old default folder name move to the new one.
+fn migrate_pictures(cfg: &Config) {
+    if !cfg.folder.trim().is_empty() {
+        return;
+    }
+    let pics = paths::pictures_dir();
+    let (old, new) = (pics.join("Rengi Snap"), pics.join("Snap"));
+    if old.is_dir() && !new.exists() && std::fs::rename(&old, &new).is_err() {
+        log("could not rename Pictures\\Rengi Snap to Pictures\\Snap");
     }
 }
 
@@ -557,7 +570,7 @@ impl App {
                 log(&format!("cannot open the video editor: {err}"));
                 let text = super::util::wide(&format!("Can't open this video: {err}"));
                 unsafe {
-                    MessageBoxW(None, windows::core::PCWSTR(text.as_ptr()), w!("Rengi Snap"), MB_OK | MB_ICONWARNING);
+                    MessageBoxW(None, windows::core::PCWSTR(text.as_ptr()), w!("Snap"), MB_OK | MB_ICONWARNING);
                 }
             }
         }
@@ -772,7 +785,7 @@ impl App {
                 let path = match &last.saved {
                     Some(p) if p.exists() => Some(p.clone()),
                     _ => {
-                        let tmp = std::env::temp_dir().join("Rengi Snap");
+                        let tmp = std::env::temp_dir().join("Snap");
                         files::save_png(&last.frame, &tmp, paths::local_stamp()).ok()
                     }
                 };

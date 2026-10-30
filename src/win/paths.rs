@@ -18,7 +18,14 @@ pub fn data_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("RENGI_SNAP_HOME") {
         return Some(PathBuf::from(dir));
     }
-    known_folder(&FOLDERID_RoamingAppData).map(|p| p.join("Rengi Snap"))
+    let base = known_folder(&FOLDERID_RoamingAppData)?;
+    let dir = base.join("Snap");
+    // Settings from before the rename.
+    let old = base.join("Rengi Snap");
+    if !dir.exists() && old.is_dir() {
+        let _ = std::fs::rename(&old, &dir);
+    }
+    Some(dir)
 }
 
 pub fn pictures_dir() -> PathBuf {

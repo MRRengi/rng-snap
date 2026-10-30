@@ -191,7 +191,7 @@ const STYLE: WINDOW_STYLE = WINDOW_STYLE(WS_OVERLAPPED.0 | WS_CAPTION.0 | WS_SYS
 impl Home {
     pub fn create(instance: HINSTANCE) -> windows::core::Result<Home> {
         let hwnd = unsafe {
-            CreateWindowExW(WS_EX_APPWINDOW, class_name::HOME, windows::core::w!("Snap by rng"), STYLE, CW_USEDEFAULT, CW_USEDEFAULT, 820, 720, None, None, Some(instance), None)?
+            CreateWindowExW(WS_EX_APPWINDOW, class_name::HOME, windows::core::w!("Snap"), STYLE, CW_USEDEFAULT, CW_USEDEFAULT, 820, 720, None, None, Some(instance), None)?
         };
         theme::apply_window(hwnd);
         let unified = theme::material(hwnd, Material::Mica);
@@ -668,7 +668,6 @@ impl Home {
         let title = "Snap";
         let gfx_w = measure(&f.title, title);
         d2d::draw_text(rt, &f.title, title, rect_f(tx, h.top + 6.0 * s, tx + gfx_w + 4.0, h.bottom), &b.label);
-        d2d::draw_text(rt, &f.body, "by rng", rect_f(tx + gfx_w + 8.0 * s, h.top + 19.0 * s, tx + gfx_w + 120.0 * s, h.bottom), &b.label2);
         let v = concat!("v", env!("CARGO_PKG_VERSION"));
         let vw = measure(&f.small, v);
         d2d::draw_text(rt, &f.small, v, rect_f(h.right - vw - 2.0, h.top + 21.0 * s, h.right, h.bottom), &b.label3);

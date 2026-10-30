@@ -1,4 +1,4 @@
-# Snap by rng
+# Snap
 
 Free, open-source screenshot and screen recording tool for Windows. Small and native (Rust, no runtime), opens instantly, stays out of the way, and looks at home in light and dark mode.
 
@@ -7,7 +7,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 ▶ **[Watch the demo with sound](docs/media/snap-demo.mp4)** · **[Download the latest release](https://github.com/MRRengi/rng-snap/releases/latest)**
 
 ## Install
-- **[RengiSnap-Setup.exe](https://github.com/MRRengi/rng-snap/releases/latest)**: installs for your user (no admin prompt), adds Snap to the Start menu, can start it with Windows and adds "Open with Snap" for MP4 and PNG files. Uninstall from Windows Settings like any app.
+- **[Snap-Setup.exe](https://github.com/MRRengi/rng-snap/releases/latest)**: installs for your user (no admin prompt), adds Snap to the Start menu, can start it with Windows and adds "Open with Snap" for MP4 and PNG files. Uninstall from Windows Settings like any app.
 - **Portable zip**: just the exe, nothing installed.
 - After launch the **Home** window shows the three things Snap does with their keys, your latest captures and the few settings (shortcut, save folder, start with Windows). Close it and Snap keeps running in the tray; click the tray icon to bring Home back.
 
@@ -29,7 +29,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 - MP4 saved to your folder; Copy puts the file on the clipboard for Telegram / Discord; one-click GIF export
 
 ## Video editor
-- **Edit** on the video card, **Edit a video** on Home, "Open with Snap" in Explorer, or `RengiSnap.exe --edit file.mp4`
+- **Edit** on the video card, **Edit a video** on Home, "Open with Snap" in Explorer, or `Snap.exe --edit file.mp4`
 - Cut out pieces (**S** splits at the playhead, **Delete** removes the selected piece, drag an edge to trim), or split out several moments and drag them into a new order
 - Text, arrows, boxes, blur, numbered steps and the other editor tools right on the video; each one is a bar on the timeline you can move and stretch
 - **Zoom (Z)**: draw an area, the camera glides in and back out
@@ -63,7 +63,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 - Windows 10 1809+; Windows 11 recommended (Mica and acrylic glass need Windows 11 22H2+)
 - The setup and exe are not signed, so SmartScreen may warn on first run: More info > Run anyway
 - Lives in the tray; "Start with Windows" is a switch on Home
-- Settings live in `%APPDATA%\Rengi Snap\config.toml`
+- Settings live in `%APPDATA%\Snap\config.toml`
 
 ## Building
 ```

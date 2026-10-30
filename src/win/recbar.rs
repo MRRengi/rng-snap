@@ -59,7 +59,7 @@ impl RecBar {
             let bar = CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                 class_name::BAR,
-                windows::core::w!("Rengi Snap recording"),
+                windows::core::w!("Snap recording"),
                 WS_POPUP,
                 0,
                 0,

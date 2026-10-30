@@ -116,13 +116,15 @@ pub fn folder_name(path: &Path) -> String {
 }
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const RUN_VALUE: PCWSTR = w!("RengiSnap");
+const RUN_VALUE: PCWSTR = w!("Snap");
+/// The autostart value from before the rename.
+const OLD_RUN_VALUE: PCWSTR = w!("RengiSnap");
 
 /// The installer already asked about autostart (then the first run leaves it alone).
 pub fn installer_chose_autostart() -> bool {
     unsafe {
         let mut size = 0u32;
-        RegGetValueW(HKEY_CURRENT_USER, w!("Software\\Rengi Snap"), w!("AutostartChosen"), RRF_RT_REG_DWORD, None, None, Some(&mut size)).is_ok()
+        RegGetValueW(HKEY_CURRENT_USER, w!("Software\\Snap"), w!("AutostartChosen"), RRF_RT_REG_DWORD, None, None, Some(&mut size)).is_ok()
     }
 }
 
@@ -139,6 +141,7 @@ pub fn set_autostart(on: bool) {
         if RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, None, KEY_SET_VALUE, &mut key).is_err() {
             return;
         }
+        let _ = RegDeleteValueW(key, OLD_RUN_VALUE);
         if on {
             if let Ok(exe) = std::env::current_exe() {
                 let cmd = wide(&format!("\"{}\" --background", exe.display()));

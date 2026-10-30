@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn res_entries_are_aligned_and_typed() {
         let imgs = icon_images(&solid, &fake_png);
-        let ver = version_info("0.6.0", &[("FileDescription", "Snap by rng")]);
+        let ver = version_info("0.6.0", &[("FileDescription", "Snap")]);
         let res = res_file(&imgs, &ver);
         // Walk the entries.
         let mut at = 0;

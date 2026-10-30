@@ -1,4 +1,4 @@
-# Rengi Snap - where we are
+# Snap - where we are
 
 **Done**
 - Decisions: Rust, native Windows, no UI framework. Hotkey Scroll Lock. All monitors freeze. Loupe on. Autostart + tray. MIT.
@@ -11,7 +11,7 @@
 - **Block 5 - Video editor**: Edit on the video card / "Edit a video..." in the tray / `--edit file`. Timeline with thumbnails + waveform: split (S), delete, trim by dragging edges, reorder by dragging pieces. All editor tools on the video with on-screen time as bars you move and stretch, camera zooms (Z) that glide in and out, undo/redo, preview with sound. Export to `<name> edit.mp4` (hardware H.264/HEVC, audio cut with soft joins) + clipboard, GIF. Checked end-to-end on the Windows CI desktop with a synthetic clip (cut, reorder, text, zoom verified frame by frame). Spec: `docs/specs/5-video-editor.md`
 
 - **Block 6 - Setup and Liquid Glass redesign**:
-  - **Setup** `RengiSnap-Setup-0.6.1.exe`: no admin prompt, Start menu, autostart, "Open with Snap" for mp4/png, clean uninstall. Plus a **portable zip**. The exe now has an icon and the name "Snap by rng".
+  - **Setup** `Snap-Setup-0.6.2.exe`: no admin prompt, Start menu, autostart, "Open with Snap" for mp4/png, clean uninstall. Plus a **portable zip**. The exe now has an icon and the name "Snap".
   - **Home window** on launch and from the tray icon: Screenshot / Record video / Edit a video tiles with their keys, recent captures (a click opens the editor), and settings (shortcut, folder, start with Windows).
   - **Whole UI in Liquid Glass**: floating glass toolbars with a real blur of what's underneath, a glass panel, loupe, card and recording bar, capsule buttons, Apple colours, a new icon.
   - **Light and dark** follow Windows, switching live.

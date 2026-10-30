@@ -1,7 +1,7 @@
 //! End-to-end test on a real Windows desktop (CI runner). Drives the app with
 //! synthetic input exactly like a user and checks what lands on the clipboard.
 //!
-//! Usage: e2e <path-to-RengiSnap.exe> <results-dir>
+//! Usage: e2e <path-to-Snap.exe> <results-dir>
 
 #[cfg(not(windows))]
 fn main() {
@@ -710,7 +710,7 @@ mod e2e {
     }
 
     fn pictures() -> PathBuf {
-        PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Pictures").join("Rengi Snap")
+        PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Pictures").join("Snap")
     }
 
     fn files_with(ext: &str) -> Vec<PathBuf> {
@@ -951,7 +951,7 @@ mod e2e {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
         let args: Vec<String> = std::env::args().collect();
-        let exe = PathBuf::from(args.get(1).cloned().unwrap_or_else(|| "RengiSnap.exe".into()));
+        let exe = PathBuf::from(args.get(1).cloned().unwrap_or_else(|| "Snap.exe".into()));
         let dir = PathBuf::from(args.get(2).cloned().unwrap_or_else(|| "e2e-results".into()));
         let _ = std::fs::create_dir_all(&dir);
         let home = dir.join("home");
@@ -1136,7 +1136,7 @@ mod e2e {
         }
 
         // G: the card's Save button writes a PNG; the card then hides by itself.
-        let pics = PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Pictures").join("Rengi Snap");
+        let pics = PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Pictures").join("Snap");
         let count_png = || std::fs::read_dir(&pics).map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "png")).count()).unwrap_or(0);
         let before = count_png();
         let s0 = seq();

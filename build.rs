@@ -1,4 +1,4 @@
-//! Embeds the app icon and version info into RengiSnap.exe (MSVC builds),
+//! Embeds the app icon and version info into Snap.exe (MSVC builds),
 //! and writes the icon as an .ico for the installer. No resource compiler
 //! needed: the `.res` is written by hand (src/winres.rs) and linked directly.
 
@@ -93,17 +93,17 @@ fn main() {
             version,
             &[
                 ("CompanyName", "rng"),
-                ("FileDescription", "Snap by rng"),
+                ("FileDescription", "Snap"),
                 ("FileVersion", version),
-                ("InternalName", "RengiSnap"),
+                ("InternalName", "Snap"),
                 ("LegalCopyright", "MIT License"),
-                ("OriginalFilename", "RengiSnap.exe"),
-                ("ProductName", "Snap by rng"),
+                ("OriginalFilename", "Snap.exe"),
+                ("ProductName", "Snap"),
                 ("ProductVersion", version),
             ],
         );
-        let res = out.join("rengi-snap.res");
+        let res = out.join("snap.res");
         std::fs::write(&res, winres::res_file(&images, &info)).expect("write .res");
-        println!("cargo:rustc-link-arg-bin=RengiSnap={}", res.display());
+        println!("cargo:rustc-link-arg-bin=Snap={}", res.display());
     }
 }

@@ -1,13 +1,13 @@
 [package]
 name = "rengi-snap"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 license = "MIT"
 description = "Fast native screenshot and screen recording tool for Windows"
 repository = "https://github.com/MRRengi/rng-snap"
 
 [[bin]]
-name = "RengiSnap"
+name = "Snap"
 path = "src/main.rs"
 
 [dependencies]

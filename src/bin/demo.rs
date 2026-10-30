@@ -1,9 +1,9 @@
 //! Films a product demo on a real Windows desktop (CI runner): sets the stage,
-//! drives Rengi Snap with smooth human-like input and records the screen with
+//! drives Snap with smooth human-like input and records the screen with
 //! ffmpeg. Writes `raw.mp4`, `beats.txt` (what happened when) and `cursor.txt`
 //! (cursor path) so the video can be edited elsewhere.
 //!
-//! Usage: demo <RengiSnap.exe> <page.html> <wallpaper.jpg> <out-dir>
+//! Usage: demo <Snap.exe> <page.html> <wallpaper.jpg> <out-dir>
 
 #[cfg(not(windows))]
 fn main() {
@@ -487,7 +487,7 @@ mod demo {
         }
         let a: Vec<String> = std::env::args().collect();
         if a.len() < 5 {
-            eprintln!("usage: demo <RengiSnap.exe> <page.html> <wallpaper.jpg> <out-dir>");
+            eprintln!("usage: demo <Snap.exe> <page.html> <wallpaper.jpg> <out-dir>");
             return 2;
         }
         let exe = std::fs::canonicalize(&a[1]).unwrap_or(PathBuf::from(&a[1]));
@@ -533,7 +533,7 @@ mod demo {
         let home = out.join("home");
         let _ = std::fs::create_dir_all(&home);
         let _ = std::fs::write(home.join("config.toml"), "video_fps = 120\ncard_seconds = 12\nloupe = true\n");
-        let pics = std::env::var("USERPROFILE").map(|p| PathBuf::from(p).join("Pictures").join("Rengi Snap")).unwrap_or_default();
+        let pics = std::env::var("USERPROFILE").map(|p| PathBuf::from(p).join("Pictures").join("Snap")).unwrap_or_default();
         let mut app = match Command::new(&exe)
             .env("RENGI_SNAP_HOME", &home)
             .env("RENGI_SNAP_NO_AUTOSTART", "1")

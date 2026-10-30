@@ -21,7 +21,7 @@ fn data(hwnd: HWND, icon: HICON) -> NOTIFYICONDATAW {
         hIcon: icon,
         ..Default::default()
     };
-    let tip = wide("Rengi Snap");
+    let tip = wide("Snap");
     nid.szTip[..tip.len()].copy_from_slice(&tip);
     nid
 }

@@ -69,7 +69,7 @@ impl Card {
             CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                 class_name::CARD,
-                windows::core::w!("Rengi Snap preview"),
+                windows::core::w!("Snap preview"),
                 WS_POPUP,
                 0,
                 0,

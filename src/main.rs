@@ -21,5 +21,5 @@ fn main() {
     #[cfg(windows)]
     win::run();
     #[cfg(not(windows))]
-    eprintln!("Rengi Snap runs on Windows.");
+    eprintln!("Snap runs on Windows.");
 }
