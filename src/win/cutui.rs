@@ -377,7 +377,7 @@ pub fn glow_bitmap(rt: &ID2D1RenderTarget, m: &Mask, dim_outside: bool, thick: b
     for i in 0..m.w * m.h {
         let a = m.alpha[i] as f32 / 255.0;
         let e = band[i] as f32 / 255.0;
-        let g = (halo[i] as f32 / 255.0).powi(2) * 0.35;
+        let g = (halo[i] as f32 / 255.0).powi(2) * 0.45 * (1.0 - a);
         let lift = if dim_outside { 0.0 } else { 0.12 * a };
         let white = (e.max(g) + lift * (1.0 - e)).min(1.0);
         let dim = if dim_outside { 0.55 * (1.0 - a) * (1.0 - e.max(g)) } else { 0.0 };
