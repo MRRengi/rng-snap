@@ -337,58 +337,51 @@ class Renderer:
         c = lambda n: None
         full = (1050, WIN_H / 2, 2330)
         prev = (939, 499 + TB, 1500)
+        # One move per idea, never in-out-in. Each entry: (t, x, y, view_width, transition_s, square_x)
         K = [
-            (0.0, *full, 0.0),
-            (p.intro_end - 0.45, *full, 0.0),
-            (p.ws(18) + 0.15, 1790, 205 + TB, 1250, 1.0),         # "Open Lens on the phone": phones on this Wi-Fi
-            (p.ws(26) + 0.25, *full, 0.85),                       # connected: the whole app
-            (p.ws(30) - 0.2, 720, 470 + TB, 1720, 1.1),            # Wi-Fi or USB: phone card + live preview
-            (p.ws(34) - 0.55, *full, 0.6),                        # click Output
-            (p.ws(37), 1815, 250 + TB, 1120, 1.0),                 # camera "Lens" + footer
-            (p.ws(46) - 0.7, 939, 520 + TB, 1500, 0.8),                       # blur
-            # blur, auto-frame and pause are one idea (the picture): the camera holds still on it
-            (p.ws(73) - 0.12, 1860, 300 + TB, 1180, 0.0),          # cut: resolution list
-            (p.ws(81) + 0.55, *full, 1.3),            # one slow pull-back: no ads, no watermark
+            (0.0, *full, 0.0, 1050),
+            (p.intro_end - 0.45, *full, 0.0, 1050),
+            (p.ws(18) + 0.15, 1790, 205 + TB, 1250, 1.1, 1790),   # "Open Lens on the phone": phones on this Wi-Fi
+            (p.ws(26) + 0.25, *full, 1.1, 650),                   # live: the whole app, held through Wi-Fi/USB and the Output click
+            (p.ws(37) - 0.2, 1815, 250 + TB, 1120, 1.2, 1815),    # camera "Lens" + footer
+            (p.ws(46) - 0.8, 939, 520 + TB, 1500, 1.0, 939),      # the picture: blur, auto-frame, pause all on one held shot
+            (p.ws(73) - 0.12, 1860, 300 + TB, 1180, 0.0, 1860),   # cut: resolution list
+            (p.ws(81) + 0.5, *full, 1.4, 939),                    # one slow pull-back: no ads, no watermark
         ]
         return K
 
+    def clamp(self, x, y, vw):
+        vh = vw * self.H / self.W
+        m = 0.035 * vw
+        x = WIN_W / 2 if vw >= WIN_W + 2 * m else min(max(x, vw / 2 - m), WIN_W - vw / 2 + m)
+        y = WIN_H / 2 if vh >= WIN_H + 2 * m else min(max(y, vh / 2 - m), WIN_H - vh / 2 + m)
+        return x, y, vw
+
+    def keys_for_format(self):
+        out = []
+        for t, x, y, vw, tr, sqx in self.cam:
+            if self.sq:
+                x, vw = sqx, vw * 0.56
+            out.append((t, *self.clamp(x, y, vw), tr))
+        return out
+
     def camera(self, t):
-        K = self.cam
+        if not hasattr(self, "_keys"):
+            self._keys = self.keys_for_format()
+        K = self._keys
         cur = K[0][1:4]
         for i in range(1, len(K)):
             tk, x, y, vw, tr = K[i]
             if t < tk:
                 break
-            prevv = cur
             if tr <= 0 or t >= tk + tr:
                 cur = (x, y, vw)
-            else:
-                e = ease((t - tk) / tr)
-                # zoom in log space so it feels even
-                lv = math.exp(math.log(prevv[2]) + (math.log(vw) - math.log(prevv[2])) * e)
-                cur = (prevv[0] + (x - prevv[0]) * e, prevv[1] + (y - prevv[1]) * e, lv)
-                break
-        x, y, vw = cur
-        if self.sq:
-            vw = vw * 0.56
-            if t >= self.plan.intro_end - 0.5:
-                xs = [self.tk.cursor(self.plan.app_ms(t + 0.15 * k))[0] for k in range(1, 8)]
-                span = [self.tk.cursor(self.plan.app_ms(t + 0.2 * k))[0] for k in range(-6, 8)]
-                wgt = 0.6 * min(1.0, (max(span) - min(span)) / 260.0)
-                if t > self.plan.ws(81) + 0.5 or cur[2] < 2000:
-                    wgt = 0.0  # only full shots follow the cursor; close-ups hold still
-                x = (1 - wgt) * x + wgt * (sum(xs) / len(xs))
-        vh = vw * self.H / self.W
-        m = 0.035 * vw
-        if vw >= WIN_W + 2 * m:
-            x = WIN_W / 2
-        else:
-            x = min(max(x, vw / 2 - m), WIN_W - vw / 2 + m)
-        if vh >= WIN_H + 2 * m:
-            y = WIN_H / 2
-        else:
-            y = min(max(y, vh / 2 - m), WIN_H - vh / 2 + m)
-        return x, y, vw
+                continue
+            e = ease((t - tk) / tr)
+            lv = math.exp(math.log(cur[2]) + (math.log(vw) - math.log(cur[2])) * e)
+            cur = (cur[0] + (x - cur[0]) * e, cur[1] + (y - cur[1]) * e, lv)
+            break
+        return cur
 
     # ---- one footage frame
     def window_frame(self, t):
@@ -436,20 +429,15 @@ class Renderer:
         W, H = self.W, self.H
         cx, cy, vw = self.camera(t)
         s = W / vw
-        # wallpaper with a little parallax
         ww = self.wall
-        z = (2330 / (vw / (0.56 if self.sq else 1))) ** 0.12
-        bw, bh = int(W * z), int(H * z)
         ox = (ww.shape[1] - W) // 2
         oy = (ww.shape[0] - H) // 2
         canvas = ww[oy:oy + H, ox:ox + W].copy()
-        if z > 1.001:
-            canvas = cv2.resize(canvas, (bw, bh), interpolation=cv2.INTER_LINEAR)[(bh - H) // 2:(bh - H) // 2 + H, (bw - W) // 2:(bw - W) // 2 + W]
         M = np.float32([[s, 0, W / 2 - cx * s], [0, s, H / 2 - cy * s]])
         Ms = np.float32([[s, 0, W / 2 - (cx + 120) * s], [0, s, H / 2 - (cy + 120) * s]])
         sh = cv2.warpAffine(self.shadow, Ms, (W, H), flags=cv2.INTER_LINEAR, borderValue=0).astype(np.float32) / 255 * 0.62
         canvas = (canvas.astype(np.float32) * (1 - sh[..., None])).astype(np.uint8)
-        wimg = cv2.warpAffine(win, M, (W, H), flags=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC, borderValue=0)
+        wimg = cv2.warpAffine(win, M, (W, H), flags=cv2.INTER_CUBIC, borderValue=0)
         wm = cv2.warpAffine(self.win_mask, M, (W, H), flags=cv2.INTER_LINEAR, borderValue=0).astype(np.float32)[..., None] / 255
         out = (canvas * (1 - wm) + wimg * wm).astype(np.uint8)
         return out
