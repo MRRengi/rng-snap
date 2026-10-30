@@ -345,12 +345,10 @@ class Renderer:
             (p.ws(30) - 0.2, 720, 470 + TB, 1720, 1.1),            # Wi-Fi or USB: phone card + live preview
             (p.ws(34) - 0.55, *full, 0.6),                        # click Output
             (p.ws(37), 1815, 250 + TB, 1120, 1.0),                 # camera "Lens" + footer
-            (p.ws(46) - 0.55, *prev, 0.65),                       # blur
-            (p.ws(62), 939, 532 + TB, 1320, 0.8),                  # pause: closer
-            (p.ws(72) + 0.35, *full, 0.6),                        # resume
-            (p.cut_at + 0.0, *full, 0.0),
+            (p.ws(46) - 0.7, 939, 520 + TB, 1500, 0.8),                       # blur
+            # blur, auto-frame and pause are one idea (the picture): the camera holds still on it
             (p.ws(73) - 0.12, 1860, 300 + TB, 1180, 0.0),          # cut: resolution list
-            (p.ws(81) + 0.55, *full, 0.9),            # the picture: no ads, no watermark
+            (p.ws(81) + 0.55, *full, 1.3),            # one slow pull-back: no ads, no watermark
         ]
         return K
 
@@ -377,8 +375,8 @@ class Renderer:
                 xs = [self.tk.cursor(self.plan.app_ms(t + 0.15 * k))[0] for k in range(1, 8)]
                 span = [self.tk.cursor(self.plan.app_ms(t + 0.2 * k))[0] for k in range(-6, 8)]
                 wgt = 0.6 * min(1.0, (max(span) - min(span)) / 260.0)
-                if t > self.plan.ws(81) + 0.5:
-                    wgt = 0.0
+                if t > self.plan.ws(81) + 0.5 or cur[2] < 2000:
+                    wgt = 0.0  # only full shots follow the cursor; close-ups hold still
                 x = (1 - wgt) * x + wgt * (sum(xs) / len(xs))
         vh = vw * self.H / self.W
         m = 0.035 * vw
