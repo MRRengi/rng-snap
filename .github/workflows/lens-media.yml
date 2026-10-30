@@ -2,6 +2,7 @@ name: lens-media
 on:
   push:
     branches: [lens-media]
+    paths-ignore: ['lens/voices.py', '.github/workflows/lens-voices.yml', 'lens/edit/**', 'lens/film/**']
 
 permissions:
   contents: write
