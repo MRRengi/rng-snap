@@ -522,7 +522,7 @@ impl Engine {
         let mk = |file: &str| -> Result<Session, String> {
             Session::builder(&env)
                 .map_err(e("session"))?
-                .with_optimization_level(GraphOptimizationLevel::Level3)
+                .with_optimization_level(GraphOptimizationLevel::All)
                 .map_err(e("optimization"))?
                 .with_intra_threads(threads)
                 .map_err(e("threads"))?
