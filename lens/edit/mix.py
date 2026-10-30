@@ -1,40 +1,68 @@
-"""Lays a one-take narration (starting at 0) and a ducked music bed under the videos.
+"""Narration (with inserted pauses) + ducked music bed + sound effects under the videos.
 
-python3 demo/voice/mix_take.py <narration.mp3> <music.mp3> <video-dir>
-Silence listed in <video-dir>/inserts.json ([[at_s, dur_s], ...]) is added to
-the narration at those points, in the pauses between sentences.
-Writes <name>-voice.mp4 next to each lens-*.mp4.
+python3 mix.py <narration.mp3> <music.mp3> <sfx-dir> <video-dir>
 """
-import subprocess, sys
+import json, subprocess, sys
 from pathlib import Path
 
-import json
+import numpy as np
 
-narr, music, vid = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+narr, music, sfxdir, vid = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4])
+SR = 48000
+
+
+def run(*a):
+    subprocess.run(list(a), check=True)
+
+
+def load(p):
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(p), "-f", "f32le", "-ac", "2", "-ar", str(SR), "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.float32).reshape(-1, 2)
+
+
+# 1. Narration with the pauses the edit asked for.
 ins = json.loads((vid / "inserts.json").read_text()) if (vid / "inserts.json").exists() else []
-edited = vid / "narration-edited.wav"
-parts, fc, prev = [], [], 0.0
-for k, (t, d) in enumerate(sorted(ins)):
-    fc.append(f"[0:a]atrim={prev:.4f}:{t:.4f},asetpts=PTS-STARTPTS[p{k}]")
-    fc.append(f"anullsrc=r=44100:cl=mono,atrim=0:{d:.4f}[s{k}]")
-    parts += [f"[p{k}]", f"[s{k}]"]
-    prev = t
-fc.append(f"[0:a]atrim={prev:.4f},asetpts=PTS-STARTPTS[tail]")
-parts.append("[tail]")
-fc.append("".join(parts) + f"concat=n={len(parts)}:v=0:a=1[out]")
-subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(narr), "-filter_complex", ";".join(fc), "-map", "[out]", "-ac", "1", "-ar", "44100", str(edited)], check=True)
-narr = edited
-for v in sorted(vid.glob("lens-*.mp4")):
-    if v.stem.endswith("-voice"):
+v = load(narr)
+parts, prev = [], 0
+for t, d in sorted(ins):
+    k = int(t * SR)
+    parts += [v[prev:k], np.zeros((int(d * SR), 2), np.float32)]
+    prev = k
+parts.append(v[prev:])
+voice = np.concatenate(parts)
+
+# 2. Sound effects on the output timeline.
+fx = json.loads((vid / "sfx.json").read_text())
+cache = {}
+total = max(len(voice) / SR, max(t for t, _, _ in fx) + 3) + 5
+sfx = np.zeros((int(total * SR), 2), np.float32)
+for t, name, g in fx:
+    if name not in cache:
+        a = load(sfxdir / f"sfx-{name}.mp3")
+        cache[name] = a / max(1e-6, np.abs(a).max()) * 0.9  # every effect peak-normalised; the gain sets its level
+    a = cache[name] * g
+    k = max(0, int(t * SR))
+    n = min(len(a), len(sfx) - k)
+    sfx[k:k + n] += a[:n]
+
+for arr, name in ((voice, "voice.wav"), (sfx, "sfx.wav")):
+    tmp = vid / (name + ".raw")
+    tmp.write_bytes(arr.astype(np.float32).tobytes())
+    run("ffmpeg", "-y", "-loglevel", "error", "-f", "f32le", "-ar", str(SR), "-ac", "2", "-i", str(tmp), str(vid / name))
+    tmp.unlink()
+
+for vf in sorted(vid.glob("lens-*.mp4")):
+    if vf.stem.endswith("-voice"):
         continue
-    total = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(v)], capture_output=True, text=True).stdout)
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(vf)], capture_output=True, text=True).stdout)
     fc = (
-        f"[1:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:{total:.3f}[nv];[nv]asplit=2[vo][sc];"
-        f"[2:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:{total:.3f},afade=t=in:d=1.0,afade=t=out:st={total - 2.5:.3f}:d=2.5,volume=0.30[mus];"
-        "[mus][sc]sidechaincompress=threshold=0.02:ratio=5:attack=60:release=600:makeup=1[duck];"
-        "[vo][duck]amix=inputs=2:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[mix]"
+        f"[1:a]apad,atrim=0:{dur:.3f}[nv];[nv]asplit=2[vo][sc];"
+        f"[2:a]aresample={SR},aformat=channel_layouts=stereo,apad,atrim=0:{dur:.3f},afade=t=out:st={dur - 2.2:.3f}:d=2.2,volume=0.34[mus];"
+        "[mus][sc]sidechaincompress=threshold=0.02:ratio=5:attack=40:release=500:makeup=1[duck];"
+        f"[3:a]apad,atrim=0:{dur:.3f},volume=0.9[fx];"
+        "[vo][duck][fx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[mix]"
     )
-    o = v.with_name(v.stem + "-voice.mp4")
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(v), "-i", str(narr), "-i", str(music), "-filter_complex", fc,
-                    "-map", "0:v", "-map", "[mix]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(o)], check=True)
+    o = vf.with_name(vf.stem + "-voice.mp4")
+    run("ffmpeg", "-y", "-loglevel", "error", "-i", str(vf), "-i", str(vid / "voice.wav"), "-i", str(music), "-i", str(vid / "sfx.wav"),
+        "-filter_complex", fc, "-map", "0:v", "-map", "[mix]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", str(SR), "-movflags", "+faststart", str(o))
     print("wrote", o)

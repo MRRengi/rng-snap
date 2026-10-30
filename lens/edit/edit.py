@@ -123,14 +123,26 @@ class Plan:
     def N(self, t):
         return t + sum(d for a, d in self.inserts if a <= t + 1e-6)
 
+    SHIFT = 4  # the hook has 4 more words than the first cut; indices below are the first cut's
+
+    def m(self, i):
+        return i + self.SHIFT if i >= 9 else i
+
     def ws(self, i):
-        return self.N(self.W[i]["start"])
+        return self.N(self.W[self.m(i)]["start"])
 
     def we(self, i):
+        return self.N(self.W[self.m(i)]["end"])
+
+    def wsn(self, i):  # raw index (the hook)
+        return self.N(self.W[i]["start"])
+
+    def wen(self, i):
         return self.N(self.W[i]["end"])
 
     def gap_before(self, i):
         """Insert point: the middle of the pause before word i (original narration time)."""
+        i = self.m(i)
         return (self.W[i - 1]["end"] + self.W[i]["start"]) / 2
 
     def build(self):
@@ -446,7 +458,8 @@ class Renderer:
     def captions(self):
         p = self.plan
         return [
-            (p.ws(0) - 0.05, p.we(8) + 0.35, "Your phone has a better camera than your laptop."),
+            (p.wsn(0) - 0.05, p.wen(5) + 0.2, "Still looking like this on calls?"),
+            (p.wsn(6) - 0.05, p.wen(12) + 0.25, "Your phone has a way better camera."),
             (p.ws(9) + 0.05, p.we(17) + 0.3, "Lens turns it into a webcam for your PC."),
             (p.ws(18) - 0.05, p.we(29) + 0.3, "Open Lens on the phone. The PC finds it by itself."),
             (p.ws(30) - 0.05, p.we(33) + 0.35, "Over Wi-Fi or USB."),
@@ -463,7 +476,7 @@ class Renderer:
         ]
 
     def draw_captions(self, img, t):
-        size = int(40 * self.s) if not self.sq else 40
+        base = int(40 * self.s) if not self.sq else 40
         caps = self.captions()
         for k, (a, b, text) in enumerate(caps):
             grows_in = k > 0 and text.startswith(caps[k - 1][2].rstrip("."))
@@ -472,6 +485,7 @@ class Renderer:
                 b = min(b, caps[k + 1][0] - 0.37)
             lo = a if grows_in else a - 0.18
             hi = caps[k + 1][0] if grows_out else b + 0.18
+            size = int(base * 1.55) if k == 0 else base  # the hook line is big
             if lo <= t < hi:
                 fin = 1.0 if grows_in else ease_out((t - (a - 0.18)) / 0.18)
                 fout = 1.0 if grows_out else ease_out(((b + 0.18) - t) / 0.18)
@@ -492,12 +506,15 @@ class Renderer:
         cap = cv2.VideoCapture(str(STOCK / "10446-1080.mp4"))
         src_fps = cap.get(cv2.CAP_PROP_FPS)
         cur, pos = None, -1
-        t_wipe = p.ws(9) - 0.05
-        t_word = p.ws(9) + 0.25
+        t_split = p.wsn(6) - 0.12   # "Your phone": the phone sweeps in to half the frame
+        t_wipe = p.ws(9) - 0.05     # "Lens": the phone takes the whole frame
+        t_word = p.ws(9) + 0.2
         rng = np.random.default_rng(7)
-        lab_l = np.array(pill_img("Laptop webcam", int(30 * self.s) if not self.sq else 28, bg=(16, 14, 18, 215), dot=(150, 150, 150)))
-        lab_r = np.array(pill_img("Your phone", int(30 * self.s) if not self.sq else 28, bg=(16, 14, 18, 215), dot=ACCENT))
+        lsz = int(30 * self.s) if not self.sq else 28
+        lab_l = np.array(pill_img("Laptop webcam", lsz, bg=(16, 14, 18, 215), dot=(150, 150, 150)))
+        lab_r = np.array(pill_img("Your phone", lsz, bg=(16, 14, 18, 215), dot=ACCENT))
         word = self.wordmark()
+        half = W // 2
         for i in range(n):
             t = i / FPS
             want = int((t + 0.6) * src_fps)
@@ -508,34 +525,38 @@ class Renderer:
                 cur, pos = f, pos + 1
             fr = cv2.resize(cur, (int(H * 16 / 9), H), interpolation=cv2.INTER_AREA)
             fw = fr.shape[1]
-            e = ease((t - t_wipe) / 0.6)
-            half = W // 2
-            right_w = int(half + (W - half) * e)
+            if t < t_wipe:
+                right_w = int(half * ease((t - t_split) / 0.42))
+            else:
+                right_w = int(half + (W - half) * ease((t - t_wipe) / 0.55))
             out = np.zeros((H, W, 3), np.uint8)
-            # right: the phone, crisp, a centred window that grows
-            x0 = (fw - right_w) // 2
-            out[:, W - right_w:] = fr[:, x0:x0 + right_w]
-            # left: the same shot through a typical laptop webcam
+            if right_w > 0:
+                x0 = (fw - right_w) // 2
+                out[:, W - right_w:] = fr[:, x0:x0 + right_w]
             lw = W - right_w
             if lw > 0:
                 small = cv2.resize(fr, (fw // 4, H // 4), interpolation=cv2.INTER_AREA)
-                small = cv2.GaussianBlur(small, (0, 0), 0.9)
-                small = small.astype(np.float32)
+                small = cv2.GaussianBlur(small, (0, 0), 0.9).astype(np.float32)
                 small = (small - 128) * 0.78 + 128 + np.array([6, 4, -8])  # flat, slightly green-grey
                 small = small * 0.82 + 8
                 small += rng.normal(0, 7, small.shape[:2])[..., None]
                 small = np.clip(small, 0, 255).astype(np.uint8)
                 ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 22])
-                small = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-                bad = cv2.resize(small, (fw, H), interpolation=cv2.INTER_LINEAR)
-                lx0 = (fw - half) // 2 + (half - lw)  # slides out to the left
+                bad = cv2.resize(cv2.imdecode(buf, cv2.IMREAD_COLOR), (fw, H), interpolation=cv2.INTER_LINEAR)
+                lx0 = (fw - W) // 2  # the bad shot stays put; the phone covers it from the right
                 out[:, :lw] = bad[:, lx0:lx0 + lw]
-                cv2.rectangle(out, (lw - 2, 0), (lw + 1, H), (12, 10, 14), -1)
+                if right_w > 0:
+                    cv2.rectangle(out, (lw - 2, 0), (lw + 1, H), (12, 10, 14), -1)
+                else:  # slow push-in on the bad shot so the hook frame is never static
+                    z = 1.0 + 0.06 * ease_out(t / max(0.1, t_split))
+                    cw, ch = int(W / z), int(H / z)
+                    out = cv2.resize(out[(H - ch) // 2:(H - ch) // 2 + ch, (W - cw) // 2:(W - cw) // 2 + cw], (W, H), interpolation=cv2.INTER_LINEAR)
                 al = 1 - ease((t - t_wipe) / 0.25)
                 ly = int(34 * (H / 1080))
                 if al > 0:
-                    blend(out, lab_l, lw - half + (half - lab_l.shape[1]) // 2, ly, al)
-                    blend(out, lab_r, W - right_w + (half - lab_r.shape[1]) // 2, ly, al)
+                    blend(out, lab_l, (lw - lab_l.shape[1]) // 2, ly, al)
+                    if right_w > lab_r.shape[1]:
+                        blend(out, lab_r, W - right_w + (right_w - lab_r.shape[1]) // 2, ly, al * min(1.0, (t - t_split) / 0.3))
             # the name over the phone picture
             if t >= t_word - 0.05:
                 a = ease_out((t - t_word) / 0.7)
@@ -574,15 +595,11 @@ class Renderer:
         a = ease_out(tt / 0.7)
         a_by = ease_out((tt - 0.3) / 0.6)
         big, im, word_w, cap_h = wd["big"], wd["img"], wd["w"], wd["h"]
-        by = "by rng"
-        f_by = wd["f_by"]
-        by_w = int(f_by.getlength(by))
-        bb = f_by.getbbox(by)
-        gap = int(big * 0.09)
+        gap = 0
         f_url = font(F_SEMI, int(34 * (self.s if not self.sq else 1)))
         ub = f_url.getbbox("github.com/MRRengi/rng-lens")
         ph = int(68 * (self.s if not self.sq else 1))
-        block = cap_h + gap + bb[3] + (int(70 * (self.s if not self.sq else 1)) + ph if url else 0)
+        block = cap_h + (int(70 * (self.s if not self.sq else 1)) + ph if url else 0)
         top = (H - block) // 2
         left = (W - word_w) // 2
         sc = 1.0 + 0.035 * (1 - a)
@@ -591,12 +608,9 @@ class Renderer:
         blend(out, arr, left - (wimg.width - im.width) // 2, top - (wimg.height - im.height) // 2, a)
         lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         d = ImageDraw.Draw(lay)
-        bx = left + word_w - by_w - int(big * 0.02)
-        byy = top + cap_h + gap - bb[1] + int((1 - a_by) * 10)
-        d.text((bx, byy), by, font=f_by, fill=(255, 255, 255, int(200 * max(0.0, a_by))))
         if url:
             a_u = ease_out((tt - 0.5) / 0.6)
-            uy = top + cap_h + gap + bb[3] + int(70 * (self.s if not self.sq else 1))
+            uy = top + cap_h + int(70 * (self.s if not self.sq else 1))
             pw = ub[2] - ub[0] + int(64 * (self.s if not self.sq else 1))
             d.rounded_rectangle([(W - pw) // 2, uy, (W + pw) // 2, uy + ph], ph // 2, fill=(16, 14, 18, int(220 * max(0.0, a_u))))
             d.text(((W - (ub[2] - ub[0])) // 2 - ub[0], uy + (ph - (ub[3] - ub[1])) // 2 - ub[1]), "github.com/MRRengi/rng-lens", font=f_url,
@@ -701,6 +715,24 @@ def main():
     plan = Plan(tk, words, narr_s)
     plan.report()
     (out / "inserts.json").write_text(json.dumps(plan.inserts))
+    # Sound effects on the output timeline: (time_s, name, gain)
+    probe = Renderer.__new__(Renderer)
+    probe.tk, probe.plan, probe.W, probe.H, probe.sq = tk, plan, 1920, 1080, False
+    cam = probe.camera_keys()
+    fx = [(0.0, "glitch", 0.28), (plan.wsn(6) - 0.2, "whoosh", 0.38), (plan.ws(9) - 0.22, "whoosh", 0.38), (plan.ws(9) + 0.15, "impact", 0.3)]
+    for t, x, y, vw, tr, sqx in cam[2:]:
+        if tr > 0:
+            fx.append((t, "swoosh", 0.22))
+        elif t > plan.intro_end:
+            fx.append((t - 0.05, "whoosh", 0.3))
+    for ms, name in tk.clicks:
+        ot = probe.out_time_of(ms)
+        if ot is not None and plan.intro_end - 0.4 < ot < plan.end_at:
+            fx.append((ot - 0.02, "click", 0.55))
+            if name == "connect":
+                fx.append((ot + 0.55, "chime", 0.3))
+    fx.append((plan.end_at, "impact", 0.35))
+    (out / "sfx.json").write_text(json.dumps(sorted(fx)))
     for o in only:
         W, H = (1920, 1080) if o == "16x9" else (1080, 1080)
         r = Renderer(tk, plan, W, H, o == "1x1")
