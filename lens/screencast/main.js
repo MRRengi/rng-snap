@@ -4,6 +4,7 @@ import * as PX from './mascot.js';
 import * as FM from './film.js';
 
 const Q = new URLSearchParams(location.search), NOSUBS = Q.has('nosubs');
+const VW = innerWidth, VH = innerHeight; FM.setView(VW, VH); if (VH > VW) document.body.classList.add('vert');
 const wD = document.getElementById('wD'), spr = document.getElementById('spr'), hudEl = document.getElementById('hud');
 const mbg = document.getElementById('mbg'), mbw = document.getElementById('mbw');
 
@@ -33,14 +34,14 @@ function drawVideo(cv, V, edge) {
 }
 function drawCat(cv, i) { const g = cv.getContext('2d'); g.drawImage(IMC[i], 0, 0, cv.width, cv.height); }
 
-const tf = ([cx, cy, z]) => `translate(960px,540px) scale(${z}) translate(${-cx}px,${-cy}px)`;
+const tf = ([cx, cy, z]) => `translate(${VW / 2}px,${VH / 2}px) scale(${z}) translate(${-cx}px,${-cy}px)`;
 function render(t) {
   const F = FM.frame(t), [cx, cy, z] = F.cam;
   wD.innerHTML = UI.desk(F.desk) + (F.app ? UI.lensWin(F.app, t) : '') + (F.calls || []).map(UI.callWin).join('') + (F.toast ? UI.toast(F.toast) : '') + (F.extra || '');
   for (const el of [wD, spr]) el.style.transform = tf(F.cam);
   const cache = {};
   const A = (key, fx = .5, fy = 0) => { const el = cache[key] !== undefined ? cache[key] : (cache[key] = wD.querySelector(`[data-a="${key}"]`));
-    if (!el) return null; const r = el.getBoundingClientRect(); return { x: (r.left + r.width * fx - 960) / z + cx, y: (r.top + r.height * fy - 540) / z + cy, w: r.width / z, h: r.height / z }; };
+    if (!el) return null; const r = el.getBoundingClientRect(); return { x: (r.left + r.width * fx - VW / 2) / z + cx, y: (r.top + r.height * fy - VH / 2) / z + cy, w: r.width / z, h: r.height / z }; };
   const c1 = F.actor.eval(t, A, F);
   // the blur boundary follows Pix as it runs along the top of the picture
   let edge = 0; if (F.video.blur === 'edge') { const v = A('vid', 0, 0); edge = c1 && v ? (c1.x - v.x) / v.w : 0; }
@@ -84,7 +85,7 @@ const cursorSvg = (x, y, sc, op, z) => { const s = 1.5 * sc / z;
 
 function hud(F, t, A, z, cx, cy) {
   const H = F.hud; let h = '';
-  const scr = p => ({ x: (p.x - cx) * z + 960, y: (p.y - cy) * z + 540 });
+  const scr = p => ({ x: (p.x - cx) * z + VW / 2, y: (p.y - cy) * z + VH / 2 });
   if (H.spot) { const p = A(H.spot.key, 0, 0); if (p) { const s = scr(p), w = p.w * z, hh = p.h * z;
     h += `<div style="position:absolute;opacity:${H.spot.op};left:${s.x - 12}px;top:${s.y - 8}px;width:${w + 24}px;height:${hh + 16}px;border-radius:12px;box-shadow:0 0 0 3000px rgba(8,8,10,.5),0 0 0 2px rgba(255,106,61,.9)"></div>`; } }
   if (H.chap && !H.wipe) h += `<div class="chap" style="opacity:${H.chap.op}"><b>${H.chap.no}</b>${H.chap.nm}</div>`;
@@ -97,7 +98,7 @@ function hud(F, t, A, z, cx, cy) {
 }
 // chapter seam: orange pixel blocks sweep across, the chapter name, a little white Pix running through
 function wipe(W, t) {
-  const S = 60, cols = 32, rows = 18, p = W.p; let s = '<div class="wipe">';
+  const S = 60, cols = Math.ceil(VW / S), rows = Math.ceil(VH / S), p = W.p; let s = '<div class="wipe">';
   const pal = ['#FF6A3D', '#F25A2E', '#FF7E55'];
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const d = (c / cols) * .55 + ((rows - r) / rows) * .2 + hash(c * 13.1 + r * 7.7) * .12;
@@ -108,7 +109,7 @@ function wipe(W, t) {
   const lo = clamp(Math.min((p - .3) / .12, (.82 - p) / .1));
   if (lo > 0) {
     s += `<div class="wlabel" style="opacity:${lo};transform:translateY(calc(-50% + ${(1 - lo) * 16}px))"><div class="no">${W.no}</div><div class="nm">${W.nm}</div></div>`;
-    s += PX.sprite({ x: 300 + p * 1320, y: 800, px: 6, legs: Math.floor(t * 12) % 2 ? 'walkA' : 'walkB', arms: 'tuck', eyes: 'r', op: lo, pal: { 1: '#FFF6F0', 2: '#B8401C', 3: '#F6D5C8', 4: '#FFD9CB', 5: '#F6D5C8' } });
+    s += PX.sprite({ x: VW * .16 + p * VW * .68, y: VH * .74, px: 6, legs: Math.floor(t * 12) % 2 ? 'walkA' : 'walkB', arms: 'tuck', eyes: 'r', op: lo, pal: { 1: '#FFF6F0', 2: '#B8401C', 3: '#F6D5C8', 4: '#FFD9CB', 5: '#F6D5C8' } });
   }
   return s + '</div>';
 }

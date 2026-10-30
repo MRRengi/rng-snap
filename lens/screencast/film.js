@@ -18,10 +18,17 @@ const ev = (t, type, o = {}) => EV.push({ t: +t.toFixed(3), type, ...o });
 const EASE = { eio, ss, eo, whip: x => { x = clamp(x); return x < .5 ? 16 * x ** 5 : 1 - Math.pow(-2 * x + 2, 5) / 2; } };
 let CAM0 = [871, 560, 1.95]; const MOVES = [];
 const cam = (t0, d, to, e = 'eio') => MOVES.push({ t0, d, to, e });
+// vertical (9:16) cut: its own camera path, following the action across the 16:9 world
+export const VIEW = { w: 1920, h: 1080, vert: false };
+export function setView(w, h) { VIEW.w = w; VIEW.h = h; VIEW.vert = h > w; }
+let VCAM0 = [871, 554, 2.5]; const VMOVES = [];
+const vcam = (t0, d, to, e = 'eio') => VMOVES.push({ t0, d, to, e });
 export function camAt(t) {
-  let v = CAM0.slice(); v[2] = Math.log(v[2]);
-  for (const m of MOVES) { if (t <= m.t0) break; const p = EASE[m.e]((t - m.t0) / m.d); v = [lerp(v[0], m.to[0], p), lerp(v[1], m.to[1], p), lerp(v[2], Math.log(m.to[2]), p)]; }
-  const z = Math.max(1, Math.exp(v[2])), hw = 960 / z, hh = 540 / z;
+  const M = VIEW.vert ? VMOVES : MOVES;
+  let v = (VIEW.vert ? VCAM0 : CAM0).slice(); v[2] = Math.log(v[2]);
+  for (const m of M) { if (t <= m.t0) break; const p = EASE[m.e]((t - m.t0) / m.d); v = [lerp(v[0], m.to[0], p), lerp(v[1], m.to[1], p), lerp(v[2], Math.log(m.to[2]), p)]; }
+  const zmin = Math.max(VIEW.w / 1920, VIEW.h / 1080);
+  const z = Math.max(zmin, Math.exp(v[2])), hw = VIEW.w / 2 / z, hh = VIEW.h / 2 / z;
   const x = clamp(v[0] + Math.sin(t * .7) * 1.1, hw, 1920 - hw), y = clamp(v[1] + Math.sin(t * .53 + 1) * .8, hh, 1080 - hh);
   return [x, y, z];
 }
@@ -105,11 +112,12 @@ export function cropAt(t, az) {
 // ───────── build
 export const SUBS = [], T = {};
 let C, CUR;
+const BK = () => VIEW.vert ? 'vid' : 'badge', BX = () => VIEW.vert ? .62 : .5;
 // the portrait picture spans this part of the 16:9 stage (fraction of its width)
 const PL0 = (1 - 9 / 16 * 480 / 730) / 2 + .02, PL1 = 1 - PL0;
 const CALLS = [['zoom', 'Zoom', 30, 52], ['teams', 'Teams', 1490, 52], ['obs', 'OBS', 1490, 700], ['discord', 'Discord', 30, 700]];
 export function build(words, feed, cat) {
-  WORDS = words; FEED = feed; CAT = cat; smoothFaces(); EV.length = 0; MOVES.length = 0; SUBS.length = 0;
+  WORDS = words; FEED = feed; CAT = cat; smoothFaces(); EV.length = 0; MOVES.length = 0; VMOVES.length = 0; SUBS.length = 0;
   C = new Actor(6); CUR = new Cursor();
   const cap = { s1: 'This is {Lens}. It turns your phone into a webcam. Open source, {no limits}.', s2: 'Open the app on your phone, and it shows up {right here}.', s3: "One click, and you're {live}.",
     s4: '{Blur} the background.', s5: 'Turn on {auto-frame}, and the shot follows you.', s6: 'Zoom, Teams, OBS and Discord all see one camera, called {Lens}.',
@@ -128,8 +136,8 @@ export function build(words, feed, cat) {
   cam(W('s1', 'open') - .15, 1.2, [960, 540, 1.0], 'eio');
   T.cat1 = 6.95;
   C.hide(0, T.born1)
-   .jump(T.born1, T.land0, at('badge', .5, 0, 0, -6), at('badge', .5, 0), 60)
-   .stand(T.land0, 7.2, at('badge', .5, 0), { eyes: t => t < T.land0 + .5 ? 'wide' : t < T.limits - .1 ? (t < W('s1', 'open') ? 'l' : 'r') : 'happy', arms: t => t > T.limits && t < T.limits + .9 ? 'up' : 'down' });
+   .jump(T.born1, T.land0, at(BK(), BX(), 0, 0, -6), at(BK(), BX(), 0), 60)
+   .stand(T.land0, 7.2, at(BK(), BX(), 0), { eyes: t => t < T.land0 + .5 ? 'wide' : t < T.limits - .1 ? (t < W('s1', 'open') ? 'l' : 'r') : 'happy', arms: t => t > T.limits && t < T.limits + .9 ? 'up' : 'down' });
 
   // ═════ B. 01 Connect (7.2–13.2)
   T.wipe1 = 7.2;
@@ -145,8 +153,8 @@ export function build(words, feed, cat) {
    .jump(T.found + .12, T.found + .44, at('sec-wifi', .62, 0), at('row-pixel', .4, 0), 34)
    .stand(T.found + .44, T.click + .03, at('row-pixel', .4, 0), { eyes: t => t < T.found + .9 ? 'wide' : 'r', arms: t => t > W('s2', 'right') - .1 ? 'point' : 'down' })
    .jump(T.click + .03, T.click + .3, at('row-pixel', .4, 0), at('row-pixel', .4, 0), 26)
-   .jump(T.click + .36, T.live, at('row-pixel', .4, 0), at('badge', .5, 0), 170, { big: true, px: 6 })
-   .stand(T.live, 13.2, at('badge', .5, 0), { eyes: t => t < T.live + .7 ? 'happy' : 'r' });
+   .jump(T.click + .36, T.live, at('row-pixel', .4, 0), at(BK(), BX(), 0), 170, { big: true, px: 6 })
+   .stand(T.live, 13.2, at(BK(), BX(), 0), { eyes: t => t < T.live + .7 ? 'happy' : 'r' });
 
   // ═════ C. 02 Effects (13.2–18.6)
   T.wipe2 = 13.2;
@@ -204,6 +212,16 @@ export function build(words, feed, cat) {
    .stand(T.end, DUR + 1, at('e-word', .66, 0, 0, 4), { px: 7, still: true, eyes: t => t < T.end + .8 ? 'wide' : t < T.sleep2 - .3 ? 'happy' : t < T.sleep2 ? 'blink' : 'shut',
      arms: t => t > T.end + .5 && t < T.end + 1.3 ? 'wave' : t > T.sleep2 ? 'tuck' : 'down', legs: t => t > T.sleep2 ? 'tuck' : 'stand', sq: t => t > T.sleep2 ? .05 + .05 * Math.sin((t - T.sleep2) * 3) : 0 });
   for (let t = T.sleep2 + .3; t < DUR - .4; t += 1.05) ev(t, 'zz');
+  // ── vertical camera: one subject at a time, framed tight
+  vcam(T.cat0 - .3, .7, [871, 600, 2.0], 'eio');                              // dog on top, the cat's call below
+  vcam(T.wipe1 + .2, .1, [1576, 380, 2.3]);                                   // the phone panel
+  vcam(T.click + .22, .5, [871, 554, 2.5], 'whip');                           // to the live picture
+  vcam(T.wipe2 + .2, .1, [871, 554, 2.5]);
+  vcam(T.wipe3 + .2, .1, [254, 420, 2.3]);                                    // the sidebar: Output
+  T.pops.forEach((x, i) => vcam(x - .35, .4, [[230, 369, 2.6], [1690, 369, 2.6], [1690, 711, 2.6], [230, 711, 2.6]][i], 'whip'));
+  vcam(T.called - .1, .65, [1576, 330, 2.3], 'eio');                          // Camera "Lens" and the footer
+  vcam(T.toast + .05, .8, [1694, 700, 2.4], 'eio');                           // the notification
+  vcam(T.out, .9, [960, 540, 1.78], 'eio');
   CH.forEach(([t0]) => ev(t0, 'wipe'));
   T.fade = DUR - .8;
 }
@@ -246,7 +264,7 @@ export function frame(t) {
     F.calls.push({ k, name, x, y, op: Math.min(1, p * 3), tf: `scale(${.6 + .4 * p})`, brb, hot: hot && t >= T.hot + i * .06 }); });
   callsUp(T.pops, T.close, false, true);
   if (t >= T.cat0 - .1 && t < T.cat1 + .3) { const p = t < T.cat1 ? back(seg(t, T.cat0 - .1, T.cat0 + .18), 1.4) : 1 - eio(seg(t, T.cat1, T.cat1 + .3));
-    F.calls.push({ k: 'hook', name: 'Zoom', x: 1250, y: 470, op: Math.min(1, p * 3), tf: `scale(${.6 + .4 * p})`, hot: false }); }
+    F.calls.push({ k: 'hook', name: 'Zoom', x: VIEW.vert ? 671 : 1250, y: VIEW.vert ? 760 : 470, op: Math.min(1, p * 3), tf: `scale(${.6 + .4 * p})`, hot: false }); }
   // F: toast, then the window leaves and the end card arrives
   if (t >= T.toast) { const k = eo(seg(t, T.toast, T.toast + .45)); F.toast = { op: Math.min(1, k * 2) * (1 - seg(t, T.out, T.out + .6)), tf: `translateX(${(1 - k) * 440}px)` }; }
   if (t >= T.out) { const k = eio(seg(t, T.out, T.out + .8)); S.winSt = { op: 1 - k, tf: `scale(${1 - .08 * k})` }; if (t >= T.out + .8) F.app = null; }
@@ -256,8 +274,8 @@ export function frame(t) {
 }
 // Pix assembles out of the LIVE badge: its pixels fly out of the badge and turn teal
 function birth(A, p) {
-  const ic = A('badge', 0, 0); if (!ic) return '';
-  const dst = PX.pixels({ x: ic.x + ic.w / 2, y: ic.y - 6, px: 6 });
+  const ic = A(BK(), 0, 0); if (!ic) return '';
+  const dst = PX.pixels({ x: ic.x + ic.w * BX(), y: ic.y - 6, px: 6 });
   const N = dst.length; let h = '';
   dst.forEach((d, i) => {
     const a = (i / N) * Math.PI * 2, sx = ic.x + ic.w / 2 + Math.cos(a) * ic.w * .5, sy = ic.y + ic.h / 2 + Math.sin(a) * ic.h * .5;

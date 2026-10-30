@@ -4,7 +4,7 @@
 <style>
 :root{--acc:#FF6A3D;--acc2:#FF8357;--bg:#1E1E1E;--side:#262628;--card:#2B2B2D;--row:#29292B;--line:#353538;--field:#3A393E;--ink:#EDEDED;--ink2:#D2D2D4;--mute:#9A9A9E;--faint:#6C6C70;--teal:#1FB5A3}
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:1920px;height:1080px;overflow:hidden;background:#16121A}
+html,body{width:100vw;height:100vh;overflow:hidden;background:#16121A}
 body{font-family:Inter,sans-serif;-webkit-font-smoothing:antialiased;color:var(--ink)}
 #stage{position:absolute;inset:0;overflow:hidden}
 .layer{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0}
@@ -105,6 +105,12 @@ body{font-family:Inter,sans-serif;-webkit-font-smoothing:antialiased;color:var(-
 .wlabel .nm{font-family:InterTight;font-size:120px;font-weight:600;letter-spacing:-.03em;line-height:1.1}
 .spot{position:absolute;inset:0}
 .fade{position:absolute;inset:0;background:#0E0B10}
+/* vertical cut */
+.vert .cap{white-space:normal;width:max-content;max-width:1010px;font-size:36px;bottom:auto;top:40px;padding:12px 24px}
+.vert .chap{top:150px;left:50%;transform:translateX(-50%);font-size:32px}
+.vert .wlabel .nm{font-size:110px}
+.vert .ew{font-size:120px;gap:22px}.vert .ed{width:84px;height:84px}.vert .ed:after{left:23px;top:23px;width:38px;height:38px}
+.vert .es1{font-size:30px}.vert .es2{font-size:18px}
 </style></head>
 <body>
 <svg width="0" height="0" style="position:absolute"><filter id="mb" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur id="mbg" stdDeviation="0 0"/></filter></svg>
