@@ -1,0 +1,13 @@
+narration 0: 865845 bytes
+stt 0: Still looking like this on calls? Your phone has a way better camera. Lens turns it into a webcam for your PC. Open Lens on the phone and the PC finds it by itself over Wi-Fi or USB. In Zoom, Teams, OBS, or Discord, just pick the camera called Lens. Blur the background with one click. Turn on auto frame and the shot follows your face. Need a minute? Hit pause, and everyone sees be right back. Up to four K at sixty frames per second. No ads, no watermark, no Pro version. Lens, free on GitHub.
+narration 1: 875249 bytes
+stt 1: Still looking like this on calls? Your phone has a way better camera. Lens turns it into a webcam for your PC. Open Lens on the phone and the PC finds it by itself over Wi-Fi or USB. In Zoom, Teams, OBS, or Discord, just pick the camera called Lens. Blur the background with one click. Turn on auto frame and the shot follows your face. Need a minute? Hit pause and everyone sees, "Be right back." Up to four K at sixty frames per second. No ads, no watermark, no pro version. Lens, free on GitHub
+narration 2: 871488 bytes
+stt 2: Still looking like this on calls? Your phone has a way better camera. Lens turns it into a webcam for your PC. Open Lens on the phone and the PC finds it by itself over Wi-Fi or USB. In Zoom, Teams, OBS, or Discord, just pick the camera called Lens. Blur the background with one click. Turn on auto frame and the shot follows your face. Need a minute? Hit pause and everyone sees be right back. Up to four K at sixty frames per second. No ads, no watermark, no pro version. Lens, free on GitHub.
+sfx whoosh ok
+sfx impact ok
+sfx click ok
+sfx swoosh ok
+sfx chime ok
+sfx glitch ok
+music ok
