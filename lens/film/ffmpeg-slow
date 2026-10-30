@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+# FakePhone's ffmpeg, in slow time: output frame rate divided by SLOW.
+import os, sys
+a = sys.argv[1:]
+k = float(os.environ.get("SLOW", "1"))
+for i in range(len(a) - 1):
+    if a[i] == "-r":
+        a[i + 1] = str(float(a[i + 1]) / k)
+os.execv("/usr/bin/ffmpeg", ["ffmpeg"] + a)
