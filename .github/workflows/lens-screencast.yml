@@ -1,0 +1,28 @@
+name: lens-screencast
+on:
+  push:
+    branches: [lens-media]
+    paths: ['lens/screencast_lines.json', 'lens/screencast_vo.py']
+permissions:
+  contents: write
+jobs:
+  vo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Voice
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          pip install -q requests
+          python3 lens/screencast_vo.py results/screencast
+      - name: Publish
+        if: always()
+        run: |
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan lens-screencast-results
+          git rm -rf --cached . > /dev/null
+          git add -f results
+          git commit -q -m "ci: screencast vo ${{ github.run_number }}"
+          git push -f origin lens-screencast-results
