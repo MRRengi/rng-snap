@@ -1,7 +1,6 @@
 """Lens living screencast: score + foley + VO → mix.wav, all timed from events.json.
 Two resolutions: a hi-fi band (Salamander piano, jazz double bass, MuldjordKit, vibraphone, glockenspiel) is the world;
-a band-limited square wave is Pix. Intro piano only → band enters on chapter 01 → fills at seams → chapter 04 drops the drums,
-and when the camera pauses the band goes "to sleep" (low-passed, quieter) → the notification wakes it → ending chord + Pix's motif."""
+a band-limited square wave is Pix. Intro piano only → band enters on chapter 01 → fills at seams → a crash on the notification → ending chord + Pix's motif."""
 import sys, os, json, numpy as np, soundfile as sf, soxr
 ROOT = os.path.expanduser('~/lemo-opuscar'); sys.path.insert(0, ROOT)
 from core.audio.sfx import SR, bp, lp, hp, noise, add, compress, limit, click as sclick
@@ -28,9 +27,8 @@ def nz(d, lo, hi, vol=1., tau=None):
     if tau: x *= np.exp(-tt(d)[:len(x)] / tau)
     return x.astype(np.float32)
 
-W1, W2, W3, W4 = [e['t'] for e in all_('wipe')]
-T_MORPH, T_LIVE, T_BRB, T_TOAST, T_OUT, T_END = first('morph'), first('stream') + .32, first('brb'), first('toast'), [e['t'] for e in all_('whoosh') if e.get('d') == 0][0], first('hit')
-T_RES = round((T_TOAST + .2) / B) * B
+W1, W2, W3 = [e['t'] for e in all_('wipe')]
+T_MORPH, T_LIVE, T_TOAST, T_OUT, T_END = first('morph'), first('stream') + .32, first('toast'), [e['t'] for e in all_('whoosh') if e.get('d') == 0][0], first('hit')
 LAND0 = sorted(e['t'] for e in all_('land'))[0]
 
 PROG = [('D2', ['F#3', 'A3', 'C#4', 'E4']), ('B1', ['D3', 'F#3', 'A3', 'C#4']), ('G1', ['B3', 'D4', 'F#4', 'A4']), ('A1', ['E3', 'A3', 'B3', 'D4'])]
@@ -58,27 +56,18 @@ def groove(t0, t1, drums=True, lite=False):
         if bi == 3: N(t + B / 2, 'jazz_bass', S.name(S.midi(root) + 7), .22, .4, 0)
         if bi == 0: [N(t + j * .012, 'piano', p, 2.0, .34, -.15) for j, p in enumerate(ch)]
         elif bi == 2: [N(t + B / 2, 'piano', p, .25, .24, -.15) for p in ch[1:]]
-groove(W1, W4)
-for w in (W2, W3, W4):
+groove(W1, T_OUT)
+for w in (W2, W3):
     for k, tm in enumerate(['tom_1', 'tom_2', 'tom_3', 'tom_4']): N(w - B + k * B / 4, 'drum_kit', tm, .3, .4 + .08 * k, (k - 1.5) * .3)
     N(w, 'drum_kit', 'crash_left', 2.0, .45, -.2)
 N(W1, 'drum_kit', 'crash_right', 2.2, .5, .2); N(W1, 'drum_kit', 'kick_drum_left', .4, .9, 0)
-groove(W4, T_TOAST, drums=False)            # chapter 4: band without drums
-# wake up: crash, light groove to the end card
-N(T_RES, 'drum_kit', 'crash_left', 2.4, .55, -.2); groove(T_RES, T_OUT, lite=True)
+N(T_TOAST, 'drum_kit', 'crash_left', 2.4, .45, .3)
 # ending: one Dmaj9 chord, vibes, glockenspiel arpeggio
 N(T_END, 'jazz_bass', 'D1', 3.5, .7, 0)
 for j, p in enumerate(['D2', 'A2', 'F#3', 'C#4', 'E4', 'A4']): N(T_END + j * .03, 'piano', p, 3.8, .45, -.1 + j * .05)
 for j, p in enumerate(['D6', 'F#6', 'A6', 'C#7', 'E7']): N(T_END + .2 + j * B / 4, 'glockenspiel', p, 1.5, .35, .3)
 N(T_END, 'vibraphone_bowed', 'A4', 3.4, .3, .2); N(T_END, 'vibraphone_bowed', 'F#4', 3.4, .3, -.2)
 band = np.zeros((NS, 2), np.float32); bm = S.render(EVN, dur=DUR + 1.5); band[:len(bm)] += bm[:NS]
-# sleep: when the camera pauses the band dips under water; the notification wakes it
-tn = np.arange(NS) / SR
-def ramp(a, b): return np.clip((tn - a) / (b - a), 0, 1)
-night = ramp(T_BRB, T_BRB + .6) * (1 - ramp(T_TOAST, T_TOAST + .15))
-dark = np.stack([lp(band[:, c], 650, 2) for c in (0, 1)], 1).astype(np.float32) * .9
-band = band * (1 - night[:, None]) + dark * night[:, None]
-
 # pixel layer: Pix's motif
 chip = np.zeros((NS, 2), np.float32)
 MOTIF = [('A5', 0, .5), ('D6', .5, .5), ('F#6', 1, .5), ('E6', 1.5, 1), ('A6', 2.5, 1.5)]
@@ -122,6 +111,8 @@ for e in E:
     elif tp == 'zoomin': add(fx, swish(.55, .22, 600, 6000), t0, 1, 0)
     elif tp == 'pop': add(fx, pop(.22 if e.get('soft') else .32, 480 + e['i'] * 60, 900 + e['i'] * 90), t0, 1, [-.6, .6, .6, -.6][e['i']])
     elif tp == 'tick': add(fx, tick(.25, 3200 + e['i'] * 200), t0, 1, [-.6, .6, .6, -.6][e['i']])
+    elif tp == 'cheer':
+        for k, p in enumerate(['A5', 'D6', 'F#6', 'A6', 'D7']): add(fx, pulse(hz(p), .07, .25, .16), t0 + k * .05, 1, (k - 2) * .2)
     elif tp == 'brb': add(fx, pop(.3, 700, 380), t0, 1, 0); add(fx, boom(.35, 80, .7), t0, 1, 0)
     elif tp == 'toast': add(fx, swish(.4, .2, 1000, 6000), t0, 1, .5); chime(['E6', 'A6'], t0 + .15, .4, .11, .5)
     elif tp == 'hit': add(fx, boom(.5, 95, .7), t0, 1, 0)

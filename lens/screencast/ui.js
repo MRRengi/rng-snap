@@ -40,12 +40,12 @@ export function callWin(c) {
   // a generic video-call window (no logos, no copied UI): title, the camera feed it receives, its camera picker
   return `<div class="cwin" data-a="cw-${c.k}" style="left:${c.x}px;top:${c.y}px;${st(c)}">
     <div class="ctb" data-a="ct-${c.k}"><span class="cdot"></span>${c.name}</div>
-    <div class="cbody"><canvas class="vid" data-v="1" width="384" height="216"></canvas>${c.brb ? `<div class="brb sm"><span>${IC.pause}</span>Be right back</div>` : ''}</div>
+    <div class="cbody"><canvas data-cat="1" width="384" height="216"></canvas><div class="self"><canvas data-v="1" width="128" height="72"></canvas><span>You</span></div></div>
     <div class="cbar"><span>Camera</span><span class="csel ${c.hot ? 'hot' : ''}">${c.hot ? `<i>${IC.check}</i>` : ''}Lens<em>▾</em></span></div></div>`;
 }
 export function toast(T) {
   return `<div class="toast2" data-a="toast" style="${st(T)}"><div class="t2h">${DOT(16)}<span>Lens</span><em>now</em></div>
-    <div class="t2b" data-a="toast-t">Free and open source</div><div class="t2s" data-a="toast-s">github.com/MRRengi/rng-lens</div></div>`;
+    <div class="t2b" data-a="toast-t">Open source, no limits</div><div class="t2s" data-a="toast-s">github.com/MRRengi/rng-lens</div></div>`;
 }
 
 // ───────── the Lens window
@@ -78,7 +78,7 @@ function center(S, t) {
       <canvas class="vid" data-v="1" width="960" height="540"></canvas>
       ${V.af ? afBrackets(V.af) : ''}
       ${V.brb ? `<div class="brb" data-a="brb" style="${st({ op: V.brb, tf: `translate(-50%,-50%) scale(${.9 + .1 * V.brb})` })}"><span>${IC.pause}</span>Be right back</div>` : ''}
-      <div class="badge" data-a="badge"><i></i>LIVE&nbsp;&nbsp;1920x1080&nbsp;&nbsp;30 fps</div>
+      <div class="badge" data-a="badge"><i></i>LIVE&nbsp;&nbsp;1080x1920&nbsp;&nbsp;30 fps</div>
       <div class="tbar2" data-a="tbar">${[['pause', V.paused ? 'play' : 'pause', V.paused], ['blur', 'blur', V.blur], ['frame', 'frame', V.frame], ['mirror', 'mirror'], ['rotate', 'rotate'], ['mic', 'mic'], ['torch', 'torch']]
         .map(([k, ic, on]) => `<span class="tb ${on ? 'on' : ''} ${V.hov === k ? 'hov' : ''}" data-a="tb-${k}">${IC[ic]}${V.tip && V.tip.key === k ? `<span class="tip" style="opacity:${V.tip.op}">${V.tip.text}</span>` : ''}</span>`).join('')}</div>
     </div>`;
