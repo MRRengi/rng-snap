@@ -1,0 +1,59 @@
+name: cutout-assets
+on:
+  workflow_dispatch:
+  push:
+    branches: [cutout]
+    paths: ['tools/cutout/**', '.github/workflows/cutout-assets.yml']
+
+permissions:
+  contents: write
+
+env:
+  TAG: cutout-models-v1
+  MOBILESAM_COMMIT: f706ad9c4eb7f219c00d9050e46328518ffb65d2
+  ORT_VERSION: 1.22.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python packages
+        run: |
+          pip install -q torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install -q timm==1.0.11 onnx==1.17.0 onnxruntime==1.22.0 pillow numpy
+      - name: MobileSAM
+        run: |
+          git clone -q https://github.com/ChaoningZhang/MobileSAM.git ms
+          git -C ms checkout -q $MOBILESAM_COMMIT
+      - name: Export
+        run: |
+          mkdir -p out
+          python tools/cutout/export.py ms out
+          python tools/cutout/check.py out | tee out/check.txt
+      - name: ONNX Runtime for Windows
+        run: |
+          curl -sSL -o ort.zip https://github.com/microsoft/onnxruntime/releases/download/v$ORT_VERSION/onnxruntime-win-x64-$ORT_VERSION.zip
+          unzip -q -j ort.zip "*/lib/onnxruntime.dll" -d out
+          cp ms/LICENSE out/MobileSAM-LICENSE.txt
+          unzip -q -j -o ort.zip "*/LICENSE" -d lic && cp lic/LICENSE out/onnxruntime-LICENSE.txt
+          cd out && sha256sum snap_cutout_encoder.onnx snap_cutout_decoder.onnx onnxruntime.dll > SHA256SUMS && cat SHA256SUMS && ls -la
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Cut out models (v1)
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: "Models Snap downloads on the first use of Cut out: MobileSAM (Apache-2.0) exported to ONNX by tools/cutout/export.py, and ONNX Runtime ${{ env.ORT_VERSION }} for Windows (MIT). Not an app release."
+          files: |
+            out/snap_cutout_encoder.onnx
+            out/snap_cutout_decoder.onnx
+            out/onnxruntime.dll
+            out/SHA256SUMS
+            out/MobileSAM-LICENSE.txt
+            out/onnxruntime-LICENSE.txt
+            out/check.txt
