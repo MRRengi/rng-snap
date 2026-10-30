@@ -1865,8 +1865,11 @@ mod e2e {
                 click_ui("editor.cut.sticker");
                 wait(10_000, || seq() != s2);
                 let (qx, qy) = at(610.0, 250.0);
+                move_to(qx - 20, qy);
+                sleep(100);
                 move_to(qx, qy);
-                sleep(300);
+                sleep(700);
+                screenshot(&rep.dir, "co5b-hover-while-cut");
                 let s3 = seq();
                 key(VK_SHIFT, false);
                 sleep(40);
@@ -1879,7 +1882,7 @@ mod e2e {
                 match clip_png_rgba() {
                     Some((w, h, px)) => {
                         save_rgba(&rep.dir.join("co6-both-clipboard.png"), w, h, &px);
-                        rep.check("CO Shift+click adds the square", added && (440..=480).contains(&w) && (210..=240).contains(&h), &format!("{w}x{h}"));
+                        rep.check("CO Shift+click adds the square", added && (550..=580).contains(&w) && (210..=240).contains(&h), &format!("{w}x{h}"));
                     }
                     None => rep.check("CO Shift+click adds the square", false, "no PNG"),
                 }

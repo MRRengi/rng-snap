@@ -54,3 +54,29 @@ pub fn clear(prefix: &str) {
         write();
     }
 }
+
+/// Sets exactly these controls under `prefix.` (others under it are dropped),
+/// writing the file only when something changed.
+pub fn replace(prefix: &str, items: &[(String, Rect)]) {
+    if !enabled() {
+        return;
+    }
+    let p = format!("{prefix}.");
+    let changed = MAP.with(|m| {
+        let mut m = m.borrow_mut();
+        let old: Vec<(String, Rect)> = m.iter().filter(|(k, _)| k.starts_with(&p)).map(|(k, r)| (k.clone(), *r)).collect();
+        let mut new = items.to_vec();
+        new.sort_by(|a, b| a.0.cmp(&b.0));
+        if old == new {
+            return false;
+        }
+        m.retain(|k, _| !k.starts_with(&p));
+        for (k, r) in new {
+            m.insert(k, r);
+        }
+        true
+    });
+    if changed {
+        write();
+    }
+}

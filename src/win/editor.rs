@@ -1015,7 +1015,7 @@ impl Editor {
             let back = blurred.as_ref().map(|image| Backdrop { image, origin: (0.0, 0.0), zoom: 1.0 });
             let st = self.state();
             self.strip.draw(rt1, gfx, &st, (0.0, 0.0), Some(back.as_ref()));
-            super::uimap::clear("editor.cut.");
+            let mut cut_ui: Vec<(String, Rect)> = Vec::new();
             if self.canvas.tool == Tool::CutOut && self.cut.is_some() {
                 if self.cut_fonts.as_ref().map(|f| f.0) != Some(s) {
                     if let (Ok(a), Ok(b), Ok(c)) = (gfx.display_font(17.0 * s, true), gfx.ui_font(13.0 * s, false), gfx.ui_font(13.0 * s, true)) {
@@ -1030,14 +1030,15 @@ impl Editor {
                     let mut o = POINT::default();
                     let _ = ClientToScreen(hwnd, &mut o);
                     if cut.worker.phase() == Phase::Ready {
-                        super::uimap::put("editor.cut.ready", Rect::new(o.x, o.y, o.x + cw as i32, o.y + chh as i32));
+                        cut_ui.push(("editor.cut.ready".into(), Rect::new(o.x, o.y, o.x + cw as i32, o.y + chh as i32)));
                     }
                     for (b, r) in &cut.buttons {
                         let name = format!("editor.cut.{}", format!("{b:?}").to_lowercase());
-                        super::uimap::put(&name, Rect::new(r.left as i32 + o.x, r.top as i32 + o.y, r.right as i32 + o.x, r.bottom as i32 + o.y));
+                        cut_ui.push((name, Rect::new(r.left as i32 + o.x, r.top as i32 + o.y, r.right as i32 + o.x, r.bottom as i32 + o.y)));
                     }
                 }
             }
+            super::uimap::replace("editor.cut", &cut_ui);
             // Status bottom-left, zoom bottom-right: small glass pills.
             if self.status_font.as_ref().map(|f| f.0) != Some(s) {
                 if let Ok(f) = gfx.ui_font(12.5 * s, true) {

@@ -36,7 +36,7 @@ const ASSETS: [Asset; 3] = [
 ];
 
 pub fn download_mb() -> u64 {
-    ASSETS.iter().map(|a| a.size).sum::<u64>() / 1_000_000
+    (ASSETS.iter().map(|a| a.size).sum::<u64>() + 500_000) / 1_000_000
 }
 
 /// `%LOCALAPPDATA%\Snap\models` (or `RENGI_SNAP_MODELS`).
@@ -351,6 +351,8 @@ impl CutState {
     pub fn clear(&mut self) {
         self.points.clear();
         self.cut = None;
+        self.hover = None;
+        self.hover_at = None;
     }
 
     pub fn hit(&self, x: f32, y: f32) -> Option<CutBtn> {
@@ -368,13 +370,17 @@ impl CutState {
 /// `thick` widens the band (the sticker's white outline).
 pub fn glow_bitmap(rt: &ID2D1RenderTarget, m: &Mask, dim_outside: bool, thick: bool) -> Option<ID2D1Bitmap> {
     let base = (m.w.max(m.h) as f32 / 300.0).clamp(2.0, 5.0);
-    let edge = cutout::edge(&m.alpha, m.w, m.h, if thick { base * 2.2 } else { base });
+    let band = cutout::edge(&m.alpha, m.w, m.h, if thick { base * 2.2 } else { base * 1.3 });
+    // A wider, softer halo around the band so the outline reads as light.
+    let halo = cutout::edge(&m.alpha, m.w, m.h, base * 4.0);
     let mut px = Vec::with_capacity(m.w * m.h * 4);
     for i in 0..m.w * m.h {
         let a = m.alpha[i] as f32 / 255.0;
-        let e = edge[i] as f32 / 255.0;
-        let white = (e * 0.95 + a * 0.10 * (1.0 - e)).min(1.0);
-        let dim = if dim_outside { 0.55 * (1.0 - a) * (1.0 - e) } else { 0.0 };
+        let e = band[i] as f32 / 255.0;
+        let g = (halo[i] as f32 / 255.0).powi(2) * 0.35;
+        let lift = if dim_outside { 0.0 } else { 0.12 * a };
+        let white = (e.max(g) + lift * (1.0 - e)).min(1.0);
+        let dim = if dim_outside { 0.55 * (1.0 - a) * (1.0 - e.max(g)) } else { 0.0 };
         let out_a = white + dim * (1.0 - white);
         let v = (white * 255.0).round() as u8; // premultiplied: white over black
         px.extend_from_slice(&[v, v, v, (out_a * 255.0).round() as u8]);
