@@ -1,0 +1,30 @@
+name: lens-align
+on:
+  push:
+    branches: [lens-media]
+    paths: ['lens/align.py']
+permissions:
+  contents: write
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Align
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          pip install -q requests
+          git fetch -q origin lens-screencast-results
+          mkdir -p src && git archive FETCH_HEAD results/screencast | tar -x -C src
+          python3 lens/align.py src/results/screencast results/align
+      - name: Publish
+        if: always()
+        run: |
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan lens-align-results
+          git rm -rf --cached . > /dev/null
+          git add -f results
+          git commit -q -m "ci: align ${{ github.run_number }}"
+          git push -f origin lens-align-results
