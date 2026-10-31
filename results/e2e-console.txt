@@ -1,0 +1,109 @@
+desktop 1024x768
+PASS test windows created - nest 3 paint 1
+PASS app starts and creates its window
+PASS A hotkey opens overlay - 213 ms
+PASS A clipboard updated
+PASS A overlay closed
+PASS A clipboard image is exactly the dragged area
+PASS A PNG format renders on demand - Some((200, 150))
+PASS A preview card shows
+PASS B window level captures the whole window
+nested: window Rect { left: 560, top: 60, right: 960, bottom: 360 } panel Rect { left: 580, top: 80, right: 940, bottom: 340 } button Rect { left: 621, top: 121, right: 741, bottom: 161 }
+PASS I hover + click captures the button - got 120x40, want 120x40
+PASS I wheel up once captures the panel - got 360x260, want 360x260
+PASS I wheel up twice captures the window - got 400x300, want 400x300
+PASS J pixel box: button - got 120x40, want 120x40
+PASS J button capture is pixel exact (all corners are button color)
+PASS J pixel box: card - got 300x200, want 300x200
+PASS J pixel box: window - got 400x300, want 400x300
+PASS C Esc closes overlay
+PASS C Esc leaves clipboard untouched
+PASS D clipboard updated
+PASS D hex color copied - got Some("#003020") want #003020
+PASS E Ctrl-release keeps overlay open
+PASS E Enter confirms
+PASS E arrow nudged the frame by 1 px
+PASS F second instance exits
+PASS F second instance opens the overlay
+PASS G card Save writes a PNG - 0 -> 1 in C:\Users\runneradmin\Pictures\Snap
+PASS G card hides itself after the mouse leaves
+PASS H Esc closes the folder menu and then the overlay
+PASS Q drawing does not finish the capture
+PASS Q Enter finishes with marks
+PASS Q clipboard is the frame size - 300x200
+PASS Q the arrow is in the image - 1291 red pixels
+PASS E Edit opens the editor
+editor client Rect { left: 88, top: 151, right: 936, bottom: 592 }, image at (362,306)
+PASS E rectangle copies by itself
+PASS E rectangle in the image - 2726 red
+PASS E step copies by itself
+PASS E blur copies by itself
+PASS E text copies by itself
+PASS E crop copies by itself
+PASS E crop gives the cropped size - Some((200, 120))
+PASS E Ctrl+Z copies by itself
+PASS E undo restores the full size - Some((300, 200))
+PASS E Ctrl+S saves a PNG
+PASS E editor closes
+record 60 took 4956 ms
+v1: 200x150 126 frames 2.08s distinct 68 audio false
+PASS V1 size is the even-rounded region - 200x150
+PASS V1 duration about 2 s - 2.08
+PASS V1 about 60 fps - 60.5
+PASS V1 frames change over time - 68 distinct
+PASS V1 card shows after stop
+PASS V2 Copy puts the video file on the clipboard
+PASS V3 GIF file appears
+PASS V3 GIF decodes with many frames - Some((200, 150, 63, 210))
+v4: 200x150 249 frames 2.07s = 120.5 fps
+PASS V4 about 120 fps - 120.5
+v5: 960x720 99 frames, bar at Rect { left: 399, top: 702, right: 625, bottom: 752 }
+PASS V5 720p option gives 960x720 - 960x720
+PASS V5 control bar is not in the video - mean difference 5.3 over 11300 px
+PASS V6 Discard leaves no file
+PASS V7 paused time is not recorded - 2.22s of ~2.3s
+PASS VE --edit opens the video editor
+VE client Rect { left: 8, top: 31, right: 1016, bottom: 712 }, preview Rect { left: 168, top: 99, right: 856, bottom: 486 } x1.075, ruler Rect { left: 34, top: 554, right: 990, bottom: 572 }
+PASS VE export writes <name> edit.mp4
+VE out: 640x360 61 frames 2.00s audio true
+PASS VE output is 2 s long - 2.00s 61 frames
+PASS VE output keeps the audio
+PASS VE 0.4 s is yellow (moved to the front) - [5, 255, 255]
+PASS VE 0.4 s shows the text - 100 red px
+PASS VE 1.3 s is red (first second of the source) - [4, 0, 255]
+PASS VE 1.9 s is zoomed onto the white box - 99% white
+PASS VE editor closes
+PASS CO --edit opens the picture in the editor
+PASS CO first use offers the download
+PASS CO models download and the picture is read - 3.7 s
+PASS CO a click copies the cutout
+PASS CO cutout is the circle's size - 223x223
+PASS CO corners are transparent - 0 0 0 0
+PASS CO middle is opaque red - [220, 40, 40] a255
+PASS CO the cut covers the circle and nothing else - 0.994
+PASS CO Sticker re-copies
+PASS CO sticker grows a white outline - 267x267, 3226 white px
+PASS CO sticker corners stay transparent - 0
+PASS CO Shift+click adds the square - 563x223
+PASS CO Save PNG writes Cut <time>.png
+PASS CO Esc clears the cut
+PASS MC Photo frame is blue - (0, 122, 255)
+PASS MC Video frame is red - (255, 59, 48)
+PASS MC Window frame is red - (255, 59, 48)
+PASS WN a click on a window starts recording it
+wn: 320x240 213 frames 3.53s distinct 101
+PASS WN video is the window's size - 320x240
+PASS WN minimized time is cut out - 3.53 s
+PASS WN the window animates in the video - 101 distinct
+PASS WN the popup on top is not in the video - [0, 0, 0, 0]
+PASS WN a wider window is fitted with bars - mid [255, 255, 251]
+PASS HM a plain second launch shows Home
+PASS HM Recent lists the captures
+PASS HM Screenshot tile opens the overlay with Home out of the way
+PASS HM Home shows again
+PASS HM Record tile opens the overlay in Video mode
+PASS TH Home shows after the theme switch
+PASS TH closing Home only hides it
+PASS app still running
+hotkey-to-overlay ms: [77, 87, 60, 58, 57]
+failures: 0

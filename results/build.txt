@@ -1,0 +1,257 @@
+   Compiling rengi-snap v0.8.0 (D:\a\rng-snap\rng-snap)
+warning: struct `Point` is never constructed
+ --> src\bin\..\geom.rs:5:12
+  |
+5 | pub struct Point {
+  |            ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `new` is never used
+  --> src\bin\..\geom.rs:11:18
+   |
+10 | impl Point {
+   | ---------- associated function in this implementation
+11 |     pub const fn new(x: i32, y: i32) -> Self {
+   |                  ^^^
+
+warning: associated items `from_points`, `is_empty`, `contains`, `intersect`, `clamp_inside`, and `area` are never used
+  --> src\bin\..\geom.rs:34:12
+   |
+24 | impl Rect {
+   | --------- associated items in this implementation
+...
+34 |     pub fn from_points(a: Point, b: Point) -> Self {
+   |            ^^^^^^^^^^^
+...
+46 |     pub fn is_empty(&self) -> bool {
+   |            ^^^^^^^^
+...
+50 |     pub fn contains(&self, p: Point) -> bool {
+   |            ^^^^^^^^
+...
+54 |     pub fn intersect(&self, o: &Rect) -> Rect {
+   |            ^^^^^^^^^
+...
+69 |     pub fn clamp_inside(&self, bounds: &Rect) -> Rect {
+   |            ^^^^^^^^^^^^
+...
+85 |     pub fn area(&self) -> i64 {
+   |            ^^^^
+
+warning: methods `crop` and `opaque_bgra` are never used
+  --> src\bin\..\image.rs:37:12
+   |
+13 | impl Frame {
+   | ---------- methods in this implementation
+...
+37 |     pub fn crop(&self, area: Rect) -> Frame {
+   |            ^^^^
+...
+51 |     pub fn opaque_bgra(&self) -> Vec<u8> {
+   |            ^^^^^^^^^^^
+
+warning: function `decode_png` is never used
+  --> src\bin\..\image.rs:81:8
+   |
+81 | pub fn decode_png(bytes: &[u8]) -> Option<Frame> {
+   |        ^^^^^^^^^^
+
+warning: function `decode_gif_first` is never used
+   --> src\bin\..\image.rs:110:8
+    |
+110 | pub fn decode_gif_first(bytes: &[u8]) -> Option<Frame> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `hex_color` is never used
+   --> src\bin\..\image.rs:130:8
+    |
+130 | pub fn hex_color(bgr: [u8; 3]) -> String {
+    |        ^^^^^^^^^
+
+warning: fields `fps` and `duration` are never read
+  --> src\bin\..\win\mp4read.rs:19:9
+   |
+13 | pub struct Reader {
+   |            ------ fields in this struct
+...
+19 |     pub fps: (u32, u32),
+   |         ^^^
+20 |     /// Length in 100 ns units (0 if unknown).
+21 |     pub duration: i64,
+   |         ^^^^^^^^
+
+warning: function `seek_to` is never used
+  --> src\bin\..\win\mp4read.rs:43:4
+   |
+43 | fn seek_to(r: &IMFSourceReader, t: i64) -> bool {
+   |    ^^^^^^^
+
+warning: methods `fps_round` and `seek` are never used
+  --> src\bin\..\win\mp4read.rs:93:12
+   |
+65 | impl Reader {
+   | ----------- methods in this implementation
+...
+93 |     pub fn fps_round(&self) -> u32 {
+   |            ^^^^^^^^^
+...
+98 |     pub fn seek(&mut self, t: i64) -> bool {
+   |            ^^^^
+
+warning: struct `AudioReader` is never constructed
+   --> src\bin\..\win\mp4read.rs:143:12
+    |
+143 | pub struct AudioReader {
+    |            ^^^^^^^^^^^
+
+warning: associated items `open`, `seek`, and `next` are never used
+   --> src\bin\..\win\mp4read.rs:150:12
+    |
+149 | impl AudioReader {
+    | ---------------- associated items in this implementation
+150 |     pub fn open(path: &Path) -> Result<AudioReader, String> {
+    |            ^^^^
+...
+171 |     pub fn seek(&mut self, t: i64) -> bool {
+    |            ^^^^
+...
+176 |     pub fn next(&mut self) -> Option<(i64, Vec<i16>)> {
+    |            ^^^^
+
+warning: unused variable: `p`
+    --> src\win\overlay.rs:1037:13
+     |
+1037 |         let p = theme::pal();
+     |             ^ help: if this is intentional, prefix it with an underscore: `_p`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `translate_all` is never used
+   --> src\annot\edit.rs:655:12
+    |
+120 | impl Canvas {
+    | ----------- method in this implementation
+...
+655 |     pub fn translate_all(&mut self, dx: f32, dy: f32) {
+    |            ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `size` is never used
+  --> src\gifenc.rs:74:12
+   |
+66 | impl<W: Write> GifWriter<W> {
+   | --------------------------- method in this implementation
+...
+74 |     pub fn size(&self) -> (u32, u32) {
+   |            ^^^^
+
+warning: function `channels` is never used
+   --> src\palette.rs:108:4
+    |
+108 | fn channels(c: u32) -> [f32; 3] {
+    |    ^^^^^^^^
+
+warning: function `over` is never used
+   --> src\palette.rs:113:8
+    |
+113 | pub fn over(top: Rgba, under: u32) -> u32 {
+    |        ^^^^
+
+warning: function `luminance` is never used
+   --> src\palette.rs:120:8
+    |
+120 | pub fn luminance(c: u32) -> f32 {
+    |        ^^^^^^^^^
+
+warning: function `contrast` is never used
+   --> src\palette.rs:127:8
+    |
+127 | pub fn contrast(a: u32, b: u32) -> f32 {
+    |        ^^^^^^^^
+
+warning: method `area` is never used
+  --> src\regions.rs:60:12
+   |
+33 | impl EdgeMap {
+   | ------------ method in this implementation
+...
+60 |     pub fn area(&self) -> Rect {
+   |            ^^^^
+
+warning: function `round_rect` is never used
+   --> src\win\d2d.rs:202:8
+    |
+202 | pub fn round_rect(r: D2D_RECT_F, radius: f32) -> D2D1_ROUNDED_RECT {
+    |        ^^^^^^^^^^
+
+warning: function `cursor_pos` is never used
+  --> src\win\files.rs:92:8
+   |
+92 | pub fn cursor_pos() -> (i32, i32) {
+   |        ^^^^^^^^^^
+
+warning: method `is_visible` is never used
+   --> src\win\home.rs:227:12
+    |
+191 | impl Home {
+    | --------- method in this implementation
+...
+227 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+
+warning: method `is_visible` is never used
+   --> src\win\recbar.rs:209:12
+    |
+ 56 | impl RecBar {
+    | ----------- method in this implementation
+...
+209 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+
+warning: field `audio` is never read
+  --> src\win\record\mod.rs:56:9
+   |
+50 | pub struct Summary {
+   |            ------- field in this struct
+...
+56 |     pub audio: bool,
+   |         ^^^^^
+
+warning: variant `SaveTo` is never constructed
+  --> src\win\toolstrip.rs:27:5
+   |
+13 | pub enum Btn {
+   |          --- variant in this enum
+...
+27 |     SaveTo,
+   |     ^^^^^^
+   |
+   = note: `Btn` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `to_point` is never used
+  --> src\win\util.rs:13:8
+   |
+13 | pub fn to_point(p: POINT) -> Point {
+   |        ^^^^^^^^
+
+warning: function `pcwstr` is never used
+  --> src\win\util.rs:26:8
+   |
+26 | pub fn pcwstr(buf: &[u16]) -> PCWSTR {
+   |        ^^^^^^
+
+warning: field `bar` is never read
+   --> src\win\veditor.rs:119:5
+    |
+118 | struct Lay {
+    |        --- field in this struct
+119 |     bar: f32,
+    |     ^^^
+    |
+    = note: `Lay` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `rengi-snap` (bin "e2e") generated 12 warnings
+warning: `rengi-snap` (bin "Snap") generated 17 warnings (run `cargo fix --bin "Snap" -p rengi-snap` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 54.14s

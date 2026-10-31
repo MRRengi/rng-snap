@@ -1,0 +1,28 @@
+installer test 0.8.0
+PASS old release installed for the upgrade test 
+PASS setup exits 0 0
+PASS old install removed by the upgrade 
+PASS old autostart value removed 
+PASS old Open with entry removed 
+PASS old copy no longer running 
+PASS one Snap entry in Apps Snap
+PASS exe installed per-user C:\Users\runneradmin\AppData\Local\Programs\Snap\Snap.exe
+PASS Start menu shortcut C:\Users\runneradmin\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Snap.lnk
+PASS desktop shortcut C:\Users\runneradmin\Desktop\Snap.lnk
+PASS autostart value points at the installed exe "C:\Users\runneradmin\AppData\Local\Programs\Snap\Snap.exe" --background
+PASS Open with command "C:\Users\runneradmin\AppData\Local\Programs\Snap\Snap.exe" --edit "%1"
+PASS mp4 and png list Snap in Open with 
+PASS exe has version info Snap / 0.8.0
+PASS exe icon is the blue squircle Color [A=255, R=83, G=174, B=253]
+PASS installed app runs 
+PASS installed app replaced the older copy C:\Users\runneradmin\AppData\Local\Programs\Snap\Snap.exe
+PASS first run keeps the installer's autostart choice "C:\Users\runneradmin\AppData\Local\Programs\Snap\Snap.exe" --background
+PASS uninstaller present 
+PASS uninstaller starts 0
+PASS exe removed 
+PASS app stopped by uninstall 
+PASS shortcuts removed 
+PASS autostart removed 
+PASS Open with removed 
+PASS portable zip has the exe Read me.txt, Snap.exe
+installer failures: 0

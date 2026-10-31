@@ -1,0 +1,317 @@
+    Updating crates.io index
+   Compiling rengi-snap v0.8.0 (D:\a\rng-snap\rng-snap)
+warning: method `area` is never used
+  --> src\bin\..\geom.rs:85:12
+   |
+24 | impl Rect {
+   | --------- method in this implementation
+...
+85 |     pub fn area(&self) -> i64 {
+   |            ^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `opaque_bgra` is never used
+  --> src\bin\..\image.rs:51:12
+   |
+13 | impl Frame {
+   | ---------- method in this implementation
+...
+51 |     pub fn opaque_bgra(&self) -> Vec<u8> {
+   |            ^^^^^^^^^^^
+
+warning: fields `fps` and `duration` are never read
+  --> src\bin\..\win\mp4read.rs:19:9
+   |
+13 | pub struct Reader {
+   |            ------ fields in this struct
+...
+19 |     pub fps: (u32, u32),
+   |         ^^^
+20 |     /// Length in 100 ns units (0 if unknown).
+21 |     pub duration: i64,
+   |         ^^^^^^^^
+
+warning: function `seek_to` is never used
+  --> src\bin\..\win\mp4read.rs:43:4
+   |
+43 | fn seek_to(r: &IMFSourceReader, t: i64) -> bool {
+   |    ^^^^^^^
+
+warning: methods `fps_round` and `seek` are never used
+  --> src\bin\..\win\mp4read.rs:93:12
+   |
+65 | impl Reader {
+   | ----------- methods in this implementation
+...
+93 |     pub fn fps_round(&self) -> u32 {
+   |            ^^^^^^^^^
+...
+98 |     pub fn seek(&mut self, t: i64) -> bool {
+   |            ^^^^
+
+warning: struct `AudioReader` is never constructed
+   --> src\bin\..\win\mp4read.rs:143:12
+    |
+143 | pub struct AudioReader {
+    |            ^^^^^^^^^^^
+
+warning: associated items `open`, `seek`, and `next` are never used
+   --> src\bin\..\win\mp4read.rs:150:12
+    |
+149 | impl AudioReader {
+    | ---------------- associated items in this implementation
+150 |     pub fn open(path: &Path) -> Result<AudioReader, String> {
+    |            ^^^^
+...
+171 |     pub fn seek(&mut self, t: i64) -> bool {
+    |            ^^^^
+...
+176 |     pub fn next(&mut self) -> Option<(i64, Vec<i16>)> {
+    |            ^^^^
+
+warning: unused variable: `p`
+    --> src\win\overlay.rs:1037:13
+     |
+1037 |         let p = theme::pal();
+     |             ^ help: if this is intentional, prefix it with an underscore: `_p`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `translate_all` is never used
+   --> src\annot\edit.rs:655:12
+    |
+120 | impl Canvas {
+    | ----------- method in this implementation
+...
+655 |     pub fn translate_all(&mut self, dx: f32, dy: f32) {
+    |            ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `size` is never used
+  --> src\gifenc.rs:74:12
+   |
+66 | impl<W: Write> GifWriter<W> {
+   | --------------------------- method in this implementation
+...
+74 |     pub fn size(&self) -> (u32, u32) {
+   |            ^^^^
+
+warning: method `area` is never used
+  --> src\regions.rs:60:12
+   |
+33 | impl EdgeMap {
+   | ------------ method in this implementation
+...
+60 |     pub fn area(&self) -> Rect {
+   |            ^^^^
+
+warning: function `round_rect` is never used
+   --> src\win\d2d.rs:202:8
+    |
+202 | pub fn round_rect(r: D2D_RECT_F, radius: f32) -> D2D1_ROUNDED_RECT {
+    |        ^^^^^^^^^^
+
+warning: function `cursor_pos` is never used
+  --> src\win\files.rs:92:8
+   |
+92 | pub fn cursor_pos() -> (i32, i32) {
+   |        ^^^^^^^^^^
+
+warning: method `is_visible` is never used
+   --> src\win\home.rs:227:12
+    |
+191 | impl Home {
+    | --------- method in this implementation
+...
+227 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+
+warning: method `is_visible` is never used
+   --> src\win\recbar.rs:209:12
+    |
+ 56 | impl RecBar {
+    | ----------- method in this implementation
+...
+209 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+
+warning: field `audio` is never read
+  --> src\win\record\mod.rs:56:9
+   |
+50 | pub struct Summary {
+   |            ------- field in this struct
+...
+56 |     pub audio: bool,
+   |         ^^^^^
+
+warning: variant `SaveTo` is never constructed
+  --> src\win\toolstrip.rs:27:5
+   |
+13 | pub enum Btn {
+   |          --- variant in this enum
+...
+27 |     SaveTo,
+   |     ^^^^^^
+   |
+   = note: `Btn` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `to_point` is never used
+  --> src\win\util.rs:13:8
+   |
+13 | pub fn to_point(p: POINT) -> Point {
+   |        ^^^^^^^^
+
+warning: function `pcwstr` is never used
+  --> src\win\util.rs:26:8
+   |
+26 | pub fn pcwstr(buf: &[u16]) -> PCWSTR {
+   |        ^^^^^^
+
+warning: field `bar` is never read
+   --> src\win\veditor.rs:119:5
+    |
+118 | struct Lay {
+    |        --- field in this struct
+119 |     bar: f32,
+    |     ^^^
+    |
+    = note: `Lay` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `rengi-snap` (bin "e2e" test) generated 7 warnings
+warning: `rengi-snap` (bin "Snap" test) generated 13 warnings (run `cargo fix --bin "Snap" -p rengi-snap --tests` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 1m 19s
+     Running unittests src\main.rs (target\release\deps\Snap-aba86da9ce11ffa9.exe)
+
+running 106 tests
+test annot::edit::tests::crop_apply_and_undo ... ok
+test annot::edit::tests::click_inside_rect_does_not_select_it ... ok
+test annot::edit::tests::drawing_is_clamped_to_bounds ... ok
+test annot::edit::tests::draw_arrow_undo_redo ... ok
+test annot::edit::tests::empty_text_leaves_nothing ... ok
+test annot::edit::tests::pen_collects_points ... ok
+test annot::edit::tests::shift_snaps ... ok
+test annot::edit::tests::select_move_resize_delete ... ok
+test annot::edit::tests::steps_and_recolor ... ok
+test annot::edit::tests::text_typing_commit_and_reedit ... ok
+test annot::edit::tests::tiny_drag_makes_nothing ... ok
+test annot::edit::tests::topmost_wins ... ok
+test annot::render::demo::demo_sheet ... ignored
+test annot::render::tests::blur_and_pixelate_reduce_detail ... ok
+test annot::icons::tests::every_icon_has_ink ... ok
+test annot::render::tests::frame_round_trip ... ok
+test annot::render::tests::highlighter_multiplies ... ok
+test annot::render::tests::arrow_lands_on_its_line_only ... ok
+test annot::render::tests::clip_offsets_items ... ok
+test config::tests::defaults_round_trip ... ok
+test config::tests::file_names_do_not_overwrite ... ok
+test annot::render::tests::rect_is_an_outline ... ok
+test config::tests::garbage_falls_back ... ok
+test config::tests::hotkey_labels ... ok
+test config::tests::recent_folders_dedupe_and_cap ... ok
+test config::tests::save_folder_default ... ok
+test config::tests::scroll_lock_moves_to_the_new_default ... ok
+test config::tests::video_settings ... ok
+test cutout::tests::cutout_real_models_find_the_circle ... ignored
+test cutout::tests::cutout_real_photo ... ignored
+test cutout::tests::cut_crops_to_the_object_with_straight_alpha ... ok
+test cutout::tests::edge_is_strongest_on_the_boundary ... ok
+test cutout::tests::sticker_adds_a_white_outline_and_shadow ... ok
+test cutout::tests::tidy_drops_specks_and_fills_small_holes ... ok
+test cutout::tests::choose_prefers_the_larger_settled_object_when_close ... ok
+test geom::tests::contains_is_half_open ... ok
+test geom::tests::from_points_normalizes ... ok
+test geom::tests::intersect_and_clamp ... ok
+test gifenc::tests::caps_rate_and_round_trips ... ok
+test gifenc::tests::scale_averages ... ok
+test gifenc::tests::sizes ... ok
+test icon::tests::icon_shape ... ok
+test image::tests::crop_clips_and_copies_rows ... ok
+test image::tests::gif_first_frame ... ok
+test image::tests::hex ... ok
+test image::tests::pixel_lookup ... ok
+test image::tests::png_decodes_back_to_the_same_pixels ... ok
+test image::tests::png_round_trips ... ok
+test mixer::tests::breaks_and_drift_resync ... ok
+test cutout::tests::upscale_maps_low_res_onto_the_picture ... ok
+test mixer::tests::late_samples_are_dropped ... ok
+test mixer::tests::mixes_two_sources_and_clamps ... ok
+test mixer::tests::nothing_before_target ... ok
+test mixer::tests::places_by_position_and_fills_gaps ... ok
+test palette::tests::accent_works_as_a_button_and_as_text ... ok
+test palette::tests::glass_text_is_readable_over_anything ... ok
+test palette::tests::over_and_contrast_basics ... ok
+test palette::tests::secondary_text_is_readable_on_solid_surfaces ... ok
+test recent::tests::ages ... ok
+test cutout::tests::prepare_scales_normalizes_and_pads ... ok
+test recent::tests::shortens_in_the_middle ... ok
+test regions::tests::edge_flush_sidebar ... ok
+test mixer::tests::jittery_packets_stay_seamless ... ok
+test regions::tests::finds_button_then_card ... ok
+test regions::tests::finds_card_from_its_text ... ok
+test regions::tests::flat_area_gives_nothing ... ok
+test regions::tests::gradient_is_not_an_edge ... ok
+test regions::tests::rounded_corners_still_count ... ok
+test regions::tests::no_box_borrowing_the_area_edge ... ok
+test select::tests::click_confirms_window ... ok
+test select::tests::click_outside_edited_frame_starts_new_drag ... ok
+test select::tests::click_uses_current_level ... ok
+test select::tests::ctrl_release_then_edit_and_enter ... ok
+test select::tests::drag_backwards_and_clipped ... ok
+test select::tests::drag_confirms_frame ... ok
+test regions::tests::sub_area_only ... ok
+test select::tests::elements_for_another_window_are_ignored ... ok
+test select::tests::elements_refine_and_wheel_walks_levels ... ok
+test select::tests::escape_cancels_anywhere ... ok
+test select::tests::hover_suggests_topmost_window ... ok
+test select::tests::resize_past_opposite_edge_flips ... ok
+test select::tests::tiny_drag_with_no_window_returns_to_hover ... ok
+test vedit::bench::compose_speed ... ignored
+test select::tests::window_level_sticks_while_moving ... ok
+test vedit::tests::audio_helpers ... ok
+test vedit::tests::compose_passes_through_and_zooms ... ok
+test vedit::tests::edited_names_do_not_overwrite ... ok
+test vedit::tests::items_fade_and_steps_keep_numbers ... ok
+test vedit::tests::compose_draws_items_scaled_and_faded ... ok
+test vedit::tests::locate_end_shows_last_frame ... ok
+test vedit::tests::split_delete_move_trim ... ok
+test vedit::tests::zoom_eases_in_holds_and_eases_out ... ok
+test vedit::tests::zoom_rect_is_clamped_and_not_tiny ... ok
+test videoplan::tests::bitrate_scales_and_caps ... ok
+test videoplan::tests::downscale_only ... ok
+test videoplan::tests::even_rounding ... ok
+test videoplan::tests::h264_where_it_fits ... ok
+test videoplan::tests::hevc_above_the_limit ... ok
+test videoplan::tests::no_hevc_drops_rate ... ok
+test win::download::tests::splits_urls ... ok
+test win::files::tests::labels ... ok
+test winres::tests::ico_has_a_directory_entry_per_size ... ok
+test winres::tests::res_entries_are_aligned_and_typed ... ok
+test winres::tests::version_info_layout ... ok
+test recent::tests::lists_newest_captures_only ... ok
+test annot::render::tests::text_and_steps_draw_with_a_font ... ok
+
+test result: ok. 102 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running unittests src\bin\demo.rs (target\release\deps\demo-82e2bbb570d311e0.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\e2e.rs (target\release\deps\e2e-4d0ae1a0dbb4a9af.exe)
+
+running 9 tests
+test geom::tests::contains_is_half_open ... ok
+test geom::tests::from_points_normalizes ... ok
+test geom::tests::intersect_and_clamp ... ok
+test image::tests::crop_clips_and_copies_rows ... ok
+test image::tests::gif_first_frame ... ok
+test image::tests::hex ... ok
+test image::tests::pixel_lookup ... ok
+test image::tests::png_decodes_back_to_the_same_pixels ... ok
+test image::tests::png_round_trips ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
