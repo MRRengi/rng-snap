@@ -1,5 +1,11 @@
 Free, open-source screenshot and screen recording tool for Windows. Small, native, no runtime.
 
+**New in 0.8**
+- **Window** mode on the panel (Photo / Video / Window): click a window and Snap records that window itself. Telegram popups, notifications or anything else on top of it never get into the video. Resize it and it stays fitted in the frame; minimize it and the recording pauses until it's back.
+- The frame shows the mode: **blue** for a screenshot, **red** for a video, so you don't record by accident.
+- New shortcut **Alt+Shift+S**, comfortable for the left hand. Scroll Lock is gone; if you used it, Snap moves you over. Windows' Win+Shift+S (Snipping Tool) is left alone.
+- **Cleaner system sound** in recordings: the faint buzz is gone.
+
 **New in 0.7**
 - **Cut out** (K in the editor), like Apple's Lift subject: point at an object and its outline glows, click and it's on the clipboard as a transparent PNG, ready to paste into a chat, a doc or Figma. Shift+click adds more objects. **Sticker** gives it a white outline and a shadow; **Save PNG** keeps it.
 - Runs locally on your PC, nothing is uploaded. The first time, Snap asks to download the model once (57 MB).
@@ -11,14 +17,14 @@ Free, open-source screenshot and screen recording tool for Windows. Small, nativ
 - Snap didn't start after installing when an older copy (for example a downloaded Snap.exe) was still running in the tray. The new one now replaces it, and the setup closes old copies first.
 
 **New in 0.6**
-- **Setup** (`Snap-Setup-0.7.0.exe`): per-user install without an admin prompt, Start menu entry, optional autostart and "Open with Snap" for MP4 / PNG, clean uninstall. Or take the **portable zip**.
+- **Setup** (`Snap-Setup-0.8.0.exe`): per-user install without an admin prompt, Start menu entry, optional autostart and "Open with Snap" for MP4 / PNG, clean uninstall. Or take the **portable zip**.
 - **Home window**: Screenshot, Record video and Edit a video as big tiles with their keys, your latest captures (click one to open it in the editor), and the settings that matter: shortcut, save folder, start with Windows. The tray icon opens it.
 - **Liquid Glass redesign**: floating glass toolbars that blur what's under them, glass capture panel, loupe, preview card and recording bar, capsule buttons, Apple system colors, new app icon.
 - **Light and dark**: follows the Windows setting, switching live.
 - The exe has its icon and name ("Snap") in Explorer, the taskbar and Task Manager.
 
 **Screenshots**
-- Scroll Lock freezes all monitors; drag a frame or click a window / element (the mouse wheel walks element > panel > window > monitor)
+- Alt+Shift+S freezes all monitors; drag a frame or click a window / element (the mouse wheel walks element > panel > window > monitor)
 - Smart element detection: child windows, UI Automation, and pixel boxes for games and canvas apps
 - Works inside browsers and Electron apps too (Chrome, Edge, VS Code, Slack, Discord): hover a card or button on a web page and it snaps to it
 - Loupe with coordinates and pixel color (C copies the hex)
@@ -44,6 +50,6 @@ Free, open-source screenshot and screen recording tool for Windows. Small, nativ
 - Timeline with thumbnails and the sound wave; preview plays with sound; undo / redo for everything
 - Export (Ctrl+E) writes "<name> edit.mp4" next to the original and puts it on the clipboard; GIF button too
 
-**Run it:** download `Snap-Setup-0.7.0.exe` and run it (or unzip the portable build). Windows SmartScreen may warn because it is not signed: More info > Run anyway. Snap opens Home, then lives in the tray.
+**Run it:** download `Snap-Setup-0.8.0.exe` and run it (or unzip the portable build). Windows SmartScreen may warn because it is not signed: More info > Run anyway. Snap opens Home, then lives in the tray.
 
 Requires Windows 10 2004 or later, Windows 11 recommended.

@@ -12,7 +12,8 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 - After launch the **Home** window shows the three things Snap does with their keys, your latest captures and the few settings (shortcut, save folder, start with Windows). Close it and Snap keeps running in the tray; click the tray icon to bring Home back.
 
 ## Screenshots
-- **Scroll Lock** freezes every monitor; drag a frame, or click what is highlighted
+- **Alt+Shift+S** (left hand, Windows' own Win+Shift+S stays untouched) freezes every monitor; drag a frame, or click what is highlighted
+- The frame tells you what you'll get: **blue** is a screenshot, **red** is a video
 - **Smart regions**: hover snaps to buttons, cards, panels, rows and windows, in native apps, browsers and Electron apps alike (child windows + UI Automation + pixel boxes for games and canvas apps); the **mouse wheel** walks element > panel > window > monitor
 - Loupe with coordinates, frame size and pixel color (**C** copies the hex)
 - Instantly on the clipboard; a preview card offers Copy / Save / Save to / Folder / Edit
@@ -31,6 +32,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 
 ## Video
 - Up to your monitor's refresh rate (120 / 144 / 240 fps), straight from the GPU into its hardware encoder (H.264, HEVC when needed)
+- **Window** mode records one window itself: a Telegram popup or anything else on top never gets into the video. Resize the window and it stays fitted; minimize it and the recording pauses
 - System sound and microphone, pause, discard; the control bar never appears in the video
 - MP4 saved to your folder; Copy puts the file on the clipboard for Telegram / Discord; one-click GIF export
 
@@ -45,7 +47,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small and na
 ## Keys
 | Where | Keys |
 |---|---|
-| Anywhere | **Scroll Lock** capture (press again to stop a recording) |
+| Anywhere | **Alt+Shift+S** capture (press again to stop a recording) |
 | Selecting | **Wheel** bigger / smaller region · **Ctrl** + release: mark it up · **C** copy pixel color · **Esc** cancel |
 | Marks and editor | **V** select · **A** arrow · **L** line · **R** rectangle · **E** ellipse · **P** pen · **H** marker · **T** text · **B** blur · **N** step · **C** crop · **K** cut out (editor) · **Shift** snap to 45° / square |
 | Editor | **Ctrl+Z / Ctrl+Y** undo / redo · **Ctrl+C** copy · **Ctrl+S** save · **Ctrl+wheel** zoom · **Ctrl+0** fit · **Ctrl+1** 100% · **Space**+drag pan |

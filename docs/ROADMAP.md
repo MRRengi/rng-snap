@@ -1,7 +1,7 @@
 # Snap - where we are
 
 **Done**
-- Decisions: Rust, native Windows, no UI framework. Hotkey Scroll Lock. All monitors freeze. Loupe on. Autostart + tray. MIT.
+- Decisions: Rust, native Windows, no UI framework. Hotkey Alt+Shift+S (was Scroll Lock until 0.8). All monitors freeze. Loupe on. Autostart + tray. MIT.
 - **Block 1 - Capture core**: tray, autostart, Scroll Lock, freeze, frame selection + window auto-detect, loupe, top mini panel, clipboard (bitmap + PNG), preview card with Copy / Save / Save to / Folder, recent folders. Spec: `docs/specs/1-capture-core.md`
 - **Block 2 - Smart regions**: hover snaps to elements inside windows (child windows + UI Automation + pixel boxes for games/canvas), mouse wheel walks levels element > panel > window > monitor. Spec: `docs/specs/2-smart-regions.md`
 - **Block 3 - Video**: Video mode on the panel (30/60/120/Max fps, Original/1080p/720p, system sound + mic), Windows.Graphics.Capture -> GPU -> hardware encoder (H.264, HEVC above the H.264 limit), control bar invisible to capture (timer, pause, stop, mic mute, discard), MP4 saved straight to the folder, card with Copy file / Save to / Folder / GIF. 47 end-to-end checks pass on a Windows CI desktop (120 fps measured at 120.5). Spec: `docs/specs/3-video.md`
@@ -26,11 +26,20 @@
   - Checked on CI: download, cut a circle (transparent corners, exact area), sticker, Shift+click, save.
   - Spec: `docs/specs/7-cut-out.md`
 
-- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor), v0.6.0 (+ setup, Home, redesign), v0.6.2 (name is just Snap), v0.7.0 (+ Cut out) on GitHub Releases.
+- **Block 8 - Window recording and polish**:
+  - **Window** mode on the panel: records one window itself (Windows.Graphics.Capture on the window), so popups on top never get in. A resized window is fitted into the frame; a minimized one pauses the recording.
+  - Frame colours: **blue** in Photo, **red** in Video and Window.
+  - Hotkey **Alt+Shift+S**. Scroll Lock is removed and old configs migrate. Releasing Alt opens no menus and doesn't switch the keyboard layout.
+  - **Sound buzz fixed**: audio packets are laid end to end instead of by their rounded timestamps (unit test: a jittery 440 Hz tone comes out sample-exact; the old way didn't).
+  - Checked on CI: frame colours, window recording with a green popup on top (not in the video), resize with bars, minimize pause.
+  - Spec: `docs/specs/8-window-recording.md`
+
+- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor), v0.6.0 (+ setup, Home, redesign), v0.6.2 (name is just Snap), v0.7.0 (+ Cut out), v0.8.0 (+ window recording, Alt+Shift+S) on GitHub Releases.
 - **Demo video** for LinkedIn/X (16:9 + 1:1, 47 s) filmed on the Windows CI desktop (`demo` branch, `demo/edit.py` edits it), posts written. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
 
 **WE ARE HERE**
-- Maks installs v0.7.0 and tries Cut out on his own screenshots and photos (people, pets, UI elements).
+- Maks installs v0.8.0 and checks: Window mode on a client window with Telegram popping up, the red/blue frame, Alt+Shift+S, and whether system sound is clean now.
+- Cut out on his own screenshots and photos (people, pets, UI elements).
 - From before, still to check on his PC:
   - Home.
   - The glass look in his theme, and switching the Windows theme.
