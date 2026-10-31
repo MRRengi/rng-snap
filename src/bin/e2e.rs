@@ -1943,6 +1943,15 @@ mod e2e {
         }
 
         // MC: the frame says what you'll get: blue in Photo, red in Video and Window.
+        // The pattern and the animated window were hidden by earlier sections.
+        let mc_windows: Vec<HWND> = [w!("E2EPattern"), w!("E2EAnim")].iter().filter_map(|c| find(*c)).collect();
+        for h in &mc_windows {
+            unsafe {
+                let _ = ShowWindow(*h, SW_SHOWNOACTIVATE);
+                let _ = SetWindowPos(*h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+        }
+        sleep(400);
         if open_overlay().is_some() {
             click_ui("panel.Photo");
             sleep(200);
@@ -2046,6 +2055,16 @@ mod e2e {
             }
             Some((_, Err(e))) => rep.check("WN video decodes", false, &e),
             None => rep.check("WN recording produced a file", false, ""),
+        }
+        if let Some(c) = find(w!("RengiSnapCard")) {
+            unsafe {
+                let _ = ShowWindow(c, SW_HIDE);
+            }
+        }
+        for h in &mc_windows {
+            unsafe {
+                let _ = ShowWindow(*h, SW_HIDE);
+            }
         }
 
         // HM: Home. A plain second launch (Start menu, Explorer) brings it up.
