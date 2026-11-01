@@ -109,10 +109,33 @@ pub fn run() {
     // `--edit <file>` opens a video or an image in its editor (also "Open with").
     let want_edit = args.iter().position(|a| a == "--edit").and_then(|i| args.get(i + 1)).map(PathBuf::from);
 
+    step("start");
+    startup_watchdog();
     // Single instance: a second launch hands its request to the running one.
     let mut mutex = unsafe { CreateMutexW(None, true, w!("Local\\RengiSnap.Instance")) };
     if mutex.is_ok() && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        let Ok(other) = (unsafe { FindWindowW(class_name::MSG, None) }) else { return };
+        // The running copy may be just starting: give its window a moment.
+        let mut found = unsafe { FindWindowW(class_name::MSG, None) }.ok();
+        let t = std::time::Instant::now();
+        while found.is_none() && t.elapsed() < std::time::Duration::from_secs(4) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            found = unsafe { FindWindowW(class_name::MSG, None) }.ok();
+        }
+        let Some(other) = found else {
+            if want_quit {
+                end_stuck_copies();
+                return;
+            }
+            // Holds the lock but never made a window: it's stuck. Take over.
+            end_stuck_copies();
+            if let Ok(h) = mutex {
+                unsafe {
+                    let _ = CloseHandle(h);
+                }
+            }
+            mutex = unsafe { CreateMutexW(None, true, w!("Local\\RengiSnap.Instance")) };
+            return run_app(mutex, want_capture, background, want_edit);
+        };
         // A copy from somewhere else is running (an older download, a
         // portable copy): this one replaces it instead of handing over.
         let stale = !want_quit && other_exe(other).is_some_and(|p| std::env::current_exe().map(|me| !same_file(&p, &me)).unwrap_or(false));
@@ -152,16 +175,25 @@ pub fn run() {
     if want_quit {
         return;
     }
+    run_app(mutex, want_capture, background, want_edit);
+}
+
+/// Everything after the single-instance check: windows, tray, hook, loop.
+fn run_app(mutex: windows::core::Result<HANDLE>, want_capture: bool, background: bool, want_edit: Option<PathBuf>) {
+    step("theme");
     theme::menus_follow_theme();
     let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }.map(|m| m.into()).unwrap_or_default();
     register_classes(instance);
 
+    step("config");
     let (cfg, cfg_path, first_run) = load_config();
+    step("pictures");
     migrate_pictures(&cfg);
     if first_run && std::env::var_os("RENGI_SNAP_NO_AUTOSTART").is_none() && !files::installer_chose_autostart() {
         files::set_autostart(true);
     }
 
+    step("windows");
     let msg = unsafe {
         CreateWindowExW(WS_EX_TOOLWINDOW, class_name::MSG, w!("Rengi Snap"), WS_POPUP, 0, 0, 0, 0, None, None, Some(instance), None)
     };
@@ -181,7 +213,9 @@ pub fn run() {
         let _ = SendMessageW(home.hwnd, WM_SETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(icon.0 as isize)));
     }
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
+    step("tray");
     tray::add(msg, icon);
+    step("hook");
     if !hook::install(msg, cfg.hotkey.clone()) {
         log("keyboard hook failed");
     }
@@ -217,6 +251,7 @@ pub fn run() {
     } else if !want_capture && !background {
         with_app(|a| a.show_home());
     }
+    step("ready");
 
     unsafe {
         let mut m = MSG::default();
@@ -266,6 +301,75 @@ fn close_and_wait(other: HWND) {
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(1500)),
         }
     }
+}
+
+/// Other Snap processes (this exe's name or the old RengiSnap.exe), by pid.
+fn snap_processes() -> Vec<u32> {
+    use windows::Win32::System::Diagnostics::ToolHelp::*;
+    let me = std::process::id();
+    let mut my_session = 0u32;
+    unsafe {
+        let _ = windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(me, &mut my_session);
+    }
+    let mut out = Vec::new();
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return out };
+        let mut e = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut ok = Process32FirstW(snap, &mut e).is_ok();
+        while ok {
+            let n = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+            let name = String::from_utf16_lossy(&e.szExeFile[..n]).to_lowercase();
+            let mut sess = u32::MAX;
+            let _ = windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(e.th32ProcessID, &mut sess);
+            if e.th32ProcessID != me && sess == my_session && (name == "snap.exe" || name == "rengisnap.exe") {
+                out.push(e.th32ProcessID);
+            }
+            ok = Process32NextW(snap, &mut e).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    out
+}
+
+/// The single-instance mutex is held but no Snap window ever appeared: that
+/// copy is stuck before its first window. Ends it so this launch can start.
+fn end_stuck_copies() {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject};
+    for pid in snap_processes() {
+        unsafe {
+            if let Ok(h) = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, pid) {
+                log(&format!("a copy of Snap (pid {pid}) holds the lock without a window; ending it"));
+                let _ = TerminateProcess(h, 1);
+                WaitForSingleObject(h, 3000);
+                let _ = CloseHandle(h);
+            }
+        }
+    }
+}
+
+/// Startup checkpoints with timings, so a launch that never shows up leaves
+/// a trace of where it stopped (a watchdog writes it after 10 s).
+static STARTUP_STEP: std::sync::Mutex<(&str, Option<std::time::Instant>)> = std::sync::Mutex::new(("", None));
+
+fn step(name: &'static str) {
+    if let Ok(mut s) = STARTUP_STEP.lock() {
+        let t0 = *s.1.get_or_insert_with(std::time::Instant::now);
+        s.0 = name;
+        if std::env::var_os("RENGI_SNAP_DEBUG").is_some() {
+            log(&format!("startup {name} at {} ms", t0.elapsed().as_millis()));
+        }
+    }
+}
+
+fn startup_watchdog() {
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(10));
+        if let Ok(s) = STARTUP_STEP.lock() {
+            if s.0 != "ready" {
+                log(&format!("startup is stuck at \"{}\" after 10 s", s.0));
+            }
+        }
+    });
 }
 
 fn register_classes(instance: HINSTANCE) {

@@ -2194,6 +2194,23 @@ mod e2e {
         }
         rep.line(&format!("hotkey-to-overlay ms: {times:?}"));
         let _ = app.kill();
+        let _ = app.wait();
+        wait(5000, || find(w!("RengiSnapMsg")).is_none());
+
+        // ST: a copy that holds the single-instance lock but never made a
+        // window (stuck at startup) must not stop the next launch.
+        let lock = unsafe { windows::Win32::System::Threading::CreateMutexW(None, true, w!("Local\\RengiSnap.Instance")) };
+        let started = launch_with(&exe, &home, &[]);
+        let home_up = wait(12_000, || visible(w!("RengiSnapHome")));
+        rep.check("ST a stuck copy holding the lock doesn't stop Snap from starting", home_up, "");
+        if let Ok(mut c) = started {
+            let _ = c.kill();
+        }
+        if let Ok(h) = lock {
+            unsafe {
+                let _ = CloseHandle(h);
+            }
+        }
         rep.line(&format!("failures: {}", rep.failures));
         if rep.failures == 0 { 0 } else { 1 }
     }

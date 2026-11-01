@@ -1034,7 +1034,6 @@ impl Overlay {
         let Some(fonts) = self.fonts.as_ref().map(|f| f.1.clone()) else { return };
         let fonts = &fonts;
         let s = self.scale;
-        let p = theme::pal();
         let mut view = sel.view();
         let pos = sel.pos();
         if self.state.window {
