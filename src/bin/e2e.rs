@@ -1768,6 +1768,12 @@ mod e2e {
                     move_to(xt(2650, 4000), clips_y);
                     sleep(700);
                     rep.check("VP hovering the timeline shows that frame", ui("veditor.hoverpreview").is_some(), "");
+                    if let Some(card) = ui("veditor.hoverpreview") {
+                        let g = grab_screen();
+                        let px = |x: i32, y: i32| g.pixel(x, y).map(|p| p.iter().map(|&c| c as u32).sum::<u32>()).unwrap_or(0);
+                        let edges = [px(card.left + 8, card.top + 30), px(card.right - 9, card.top + 30), px(card.left + card.width() / 2, card.top + 8)];
+                        rep.check("VP the hover frame fills its card (no black bars)", edges.iter().all(|&v| v > 120), &format!("{edges:?}"));
+                    }
                     screenshot(&rep.dir, "vp2-hover-preview");
                     key(VK_CONTROL, false);
                     for _ in 0..4 {

@@ -6,7 +6,7 @@ use super::mp4read::{AudioReader, Opts, Reader};
 use crate::annot::Item;
 use crate::annot::font::Fonts;
 use crate::image::Frame;
-use crate::vedit::{self, Cam, Composer, Timeline, coarse_to_fine, fit};
+use crate::vedit::{self, Cam, Composer, Timeline, coarse_to_fine};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -60,10 +60,10 @@ impl Player {
             unsafe {
                 let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
             }
-            // COM objects stay on the thread that made them. GPU decode, and
-            // big sources (4K) come in at most 1920x1080: plenty for a preview.
-            let size = Reader::open(&src).ok().map(|r| fit(r.w, r.h, 1920, 1080)).filter(|&(w, h)| w > 0 && h > 0);
-            let Ok(reader) = Reader::open_with(&src, Opts { gpu: true, size }) else { return };
+            // COM objects stay on the thread that made them. GPU decode at the
+            // file's size: the processor's scaler letterboxes coded frames whose
+            // height isn't a multiple of 16, and compose scales anyway.
+            let Ok(reader) = Reader::open_with(&src, Opts { gpu: true, size: None }) else { return };
             super::util::log(&format!("preview decoder: {}x{}", reader.w, reader.h));
             Worker { reader, view, fonts, sh, notify: hw, msg, composer: Composer::default(), raw: None, next: None, stats: Stats::default() }.run(rx)
         });
@@ -289,7 +289,7 @@ pub fn make_strips(src: PathBuf, duration_ms: u32, thumb_h: u32, strips: Arc<Str
         let th = thumb_h.max(8);
         let tw = ((probe.w as f32 / probe.h.max(1) as f32) * th as f32).round().max(8.0) as u32;
         drop(probe);
-        let Ok(mut r) = Reader::open_with(&src, Opts { gpu: true, size: Some((tw, th)) }) else {
+        let Ok(mut r) = Reader::open_with(&src, Opts { gpu: true, size: None }) else {
             strips.done.store(true, Ordering::Release);
             return;
         };
