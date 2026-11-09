@@ -1,5 +1,12 @@
 Free, open-source screenshot and screen recording tool for Windows. Small, native, no runtime.
 
+**New in 0.9**
+- **The video editor is much faster**: video decodes on the graphics card, the window no longer re-blurs itself on every frame, and the thumbnail strip fills the whole length within moments, then sharpens.
+- **A timeline like Final Cut / CapCut**: named tracks (Video, Audio, Marks), a real waveform track, duration on every clip, yellow trim grips, a playhead with a time bubble, icons on the marks.
+- **Hover the timeline** to see that frame in a card above it. **Scrubbing** shows a frame instantly and the exact one right after.
+- **Zoom the timeline** with Ctrl+wheel or the slider (scroll with the wheel, "show all" button); it follows the playhead while playing.
+- **Tooltips** on every control, track, clip edge and mark explain what they do and their shortcuts.
+
 **Fixed in 0.8.1**
 - Snap could fail to open at all after installing: a copy that got stuck while starting kept the "already running" lock, so every new launch quietly quit. Now a new launch notices the stuck copy, ends it and starts. Startup also leaves a note in the log if it ever stalls, so the cause can be found.
 
@@ -20,7 +27,7 @@ Free, open-source screenshot and screen recording tool for Windows. Small, nativ
 - Snap didn't start after installing when an older copy (for example a downloaded Snap.exe) was still running in the tray. The new one now replaces it, and the setup closes old copies first.
 
 **New in 0.6**
-- **Setup** (`Snap-Setup-0.8.1.exe`): per-user install without an admin prompt, Start menu entry, optional autostart and "Open with Snap" for MP4 / PNG, clean uninstall. Or take the **portable zip**.
+- **Setup** (`Snap-Setup-0.9.0.exe`): per-user install without an admin prompt, Start menu entry, optional autostart and "Open with Snap" for MP4 / PNG, clean uninstall. Or take the **portable zip**.
 - **Home window**: Screenshot, Record video and Edit a video as big tiles with their keys, your latest captures (click one to open it in the editor), and the settings that matter: shortcut, save folder, start with Windows. The tray icon opens it.
 - **Liquid Glass redesign**: floating glass toolbars that blur what's under them, glass capture panel, loupe, preview card and recording bar, capsule buttons, Apple system colors, new app icon.
 - **Light and dark**: follows the Windows setting, switching live.
@@ -53,6 +60,6 @@ Free, open-source screenshot and screen recording tool for Windows. Small, nativ
 - Timeline with thumbnails and the sound wave; preview plays with sound; undo / redo for everything
 - Export (Ctrl+E) writes "<name> edit.mp4" next to the original and puts it on the clipboard; GIF button too
 
-**Run it:** download `Snap-Setup-0.8.1.exe` and run it (or unzip the portable build). Windows SmartScreen may warn because it is not signed: More info > Run anyway. Snap opens Home, then lives in the tray.
+**Run it:** download `Snap-Setup-0.9.0.exe` and run it (or unzip the portable build). Windows SmartScreen may warn because it is not signed: More info > Run anyway. Snap opens Home, then lives in the tray.
 
 Requires Windows 10 2004 or later, Windows 11 recommended.

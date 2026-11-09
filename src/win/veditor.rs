@@ -1648,7 +1648,8 @@ impl VEditor {
                     }
                     let src_ms = c.a + (local + ms_per_thumb / 2.0).min(c.len() as f32 - 1.0) as u32;
                     if let Some(bm) = self.thumb_near(rt, &thumbs, src_ms) {
-                        bmps.push((rect_f(x, r.top, x + tw, r.bottom), bm));
+                        // Whole pixels, 1 px overlap: no hairline seams between frames.
+                        bmps.push((rect_f(x.floor(), r.top, (x + tw).ceil() + 1.0, r.bottom), bm));
                     }
                     k += 1;
                 }

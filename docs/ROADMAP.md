@@ -34,11 +34,20 @@
   - Checked on CI: frame colours, window recording with a green popup on top (not in the video), resize with bars, minimize pause.
   - Spec: `docs/specs/8-window-recording.md`
 
-- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor), v0.6.0 (+ setup, Home, redesign), v0.6.2 (name is just Snap), v0.7.0 (+ Cut out), v0.8.0 (+ window recording, Alt+Shift+S), v0.8.1 (a stuck copy no longer blocks launching) on GitHub Releases.
+- **Block 9 - Video editor pass**:
+  - GPU decode, no per-frame blur, thumbnails by seeking coarse to fine.
+  - Final Cut / CapCut timeline: track names, audio waveform track, clip durations, yellow trim grips, playhead bubble, mark icons, hover frame card, instant scrub frames.
+  - Timeline zoom (Ctrl+wheel, slider, show all, scrollbar, follows playback).
+  - Tooltips everywhere. Status as a toast (the stray "Split" is gone).
+  - Checked on CI: playback fps from real timings, thumbnails time, tooltip, hover card without black bars, zoom and fit, plus the old editing checks.
+  - Spec: `docs/specs/9-video-editor-pass.md`
+
+- **Releases** v0.3.0 (blocks 1-3), v0.4.0 (+ editor), v0.4.1 (smart regions inside Chrome/Edge/Electron apps), v0.5.0 (+ video editor), v0.6.0 (+ setup, Home, redesign), v0.6.2 (name is just Snap), v0.7.0 (+ Cut out), v0.8.0 (+ window recording, Alt+Shift+S), v0.8.1 (a stuck copy no longer blocks launching), v0.9.0 (faster video editor, new timeline) on GitHub Releases.
 - **Demo video** for LinkedIn/X (16:9 + 1:1, 47 s) filmed on the Windows CI desktop (`demo` branch, `demo/edit.py` edits it), posts written. CI publishes a new release by itself whenever the version in Cargo.toml goes up and all tests pass.
 
 **WE ARE HERE**
-- Maks installs v0.8.1 and checks: Window mode on a client window with Telegram popping up, the red/blue frame, Alt+Shift+S, and whether system sound is clean now.
+- Maks installs v0.9.0 and checks the video editor on his own 1080p recordings: smoothness, the new timeline, zoom, tooltips.
+- Also still to check: Window mode on a client window with Telegram popping up, the red/blue frame, Alt+Shift+S, and whether system sound is clean now.
 - Cut out on his own screenshots and photos (people, pets, UI elements).
 - From before, still to check on his PC:
   - Home.
