@@ -764,7 +764,10 @@ impl App {
         unsafe {
             let _ = DwmFlush();
         }
-        match Recorder::start(params) {
+        let t_start = std::time::Instant::now();
+        let started = Recorder::start(params);
+        log(&format!("recording start took {} ms", t_start.elapsed().as_millis()));
+        match started {
             Ok(r) => {
                 self.recbar.show(&self.gfx, region, self.cfg.mic);
                 self.rec = Some(Recording { recorder: r, region });

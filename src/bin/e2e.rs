@@ -987,7 +987,8 @@ mod e2e {
             sleep(100);
             click();
         }
-        if !wait(4000, || visible(w!("RengiSnapBar"))) {
+        // The first recording of a session loads the encoder: give it time.
+        if !wait(12_000, || visible(w!("RengiSnapBar"))) {
             close_overlay_if_open();
             return None;
         }
