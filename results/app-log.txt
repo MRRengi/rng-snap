@@ -1,0 +1,213 @@
+startup start at 0 ms
+startup theme at 0 ms
+startup config at 0 ms
+startup pictures at 1 ms
+startup windows at 2 ms
+startup tray at 9 ms
+startup hook at 16 ms
+startup ready at 17 ms
+elements 70 ms: hwnd 0 uia 0 pixel 1 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 376, top: 100, right: 520, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 3 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 170, top: 150, right: 370, bottom: 300 })
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 3 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+wheel 120 -> Redraw frame Some(Rect { left: 120, top: 100, right: 376, bottom: 400 })
+wheel 120 -> Redraw frame Some(Rect { left: 120, top: 100, right: 520, bottom: 356 })
+wheel 120 -> Redraw frame Some(Rect { left: 120, top: 100, right: 520, bottom: 400 })
+wheel 120 -> Redraw frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel -120 -> Redraw frame Some(Rect { left: 120, top: 100, right: 520, bottom: 400 })
+outcome Confirm(Rect { left: 120, top: 100, right: 520, bottom: 400 })
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 3 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 3 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 621, top: 121, right: 741, bottom: 161 })
+elements 3 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 3 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 6 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+wheel 120 -> Redraw frame Some(Rect { left: 580, top: 80, right: 940, bottom: 340 })
+outcome Confirm(Rect { left: 580, top: 80, right: 940, bottom: 340 })
+elements 3 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 3 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 7 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+wheel 120 -> Redraw frame Some(Rect { left: 580, top: 80, right: 940, bottom: 340 })
+wheel 120 -> Redraw frame Some(Rect { left: 560, top: 60, right: 960, bottom: 360 })
+outcome Confirm(Rect { left: 560, top: 60, right: 960, bottom: 360 })
+elements 3 ms: hwnd 2 uia 0 pixel 0 | uia true deepest Button; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 621, top: 121, right: 741, bottom: 161 }, Rect { left: 580, top: 80, right: 940, bottom: 340 }, Rect { left: 560, top: 60, right: 960, bottom: 360 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 5 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 620, top: 450, right: 740, bottom: 490 })
+elements 5 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 10 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+wheel 120 -> Redraw frame Some(Rect { left: 590, top: 420, right: 890, bottom: 620 })
+outcome Confirm(Rect { left: 590, top: 420, right: 890, bottom: 620 })
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 8 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+wheel 120 -> Redraw frame Some(Rect { left: 590, top: 420, right: 890, bottom: 620 })
+wheel 120 -> Redraw frame Some(Rect { left: 560, top: 390, right: 960, bottom: 690 })
+outcome Confirm(Rect { left: 560, top: 390, right: 960, bottom: 690 })
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Cancel
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 620, top: 450, right: 740, bottom: 490 }, Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 141, top: 120, right: 241, bottom: 190 })
+startup start at 0 ms
+elements 6 ms: hwnd 0 uia 0 pixel 1 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Cancel
+elements 4 ms: hwnd 0 uia 0 pixel 1 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 120, top: 100, right: 376, bottom: 356 })
+outcome Cancel
+elements 7 ms: hwnd 1 uia 0 pixel 0 | uia true deepest DRAG_BAR_WINDOW_CLASS; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 366, top: 27, right: 1024, bottom: 67 }, Rect { left: 25, top: 26, right: 1024, bottom: 654 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 5 ms: hwnd 0 uia 0 pixel 1 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 590, top: 420, right: 890, bottom: 620 }, Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 590, top: 420, right: 890, bottom: 620 })
+elements 6 ms: hwnd 0 uia 0 pixel 0 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Cancel
+elements 3 ms: hwnd 1 uia 0 pixel 0 | uia true deepest DRAG_BAR_WINDOW_CLASS; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 366, top: 27, right: 1024, bottom: 67 }, Rect { left: 25, top: 26, right: 1024, bottom: 654 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 9 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EAnim; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 420, right: 192, bottom: 660 }, Rect { left: 120, top: 420, right: 212, bottom: 660 }, Rect { left: 120, top: 420, right: 440, bottom: 660 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 131, top: 431, right: 331, bottom: 581 })
+borderless access: Ok(2)
+border required now: Ok(false)
+recording start took 604 ms
+startup start at 0 ms
+startup theme at 0 ms
+startup config at 0 ms
+startup pictures at 1 ms
+startup windows at 2 ms
+startup tray at 9 ms
+startup hook at 16 ms
+startup ready at 16 ms
+elements 15 ms: hwnd 0 uia 0 pixel 0 | uia true deepest E2EPainted; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 560, top: 390, right: 960, bottom: 690 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EAnim; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 420, right: 192, bottom: 660 }, Rect { left: 120, top: 420, right: 212, bottom: 660 }, Rect { left: 120, top: 420, right: 440, bottom: 660 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 131, top: 431, right: 331, bottom: 581 })
+borderless access: Ok(2)
+border required now: Ok(false)
+recording start took 141 ms
+startup start at 0 ms
+startup theme at 0 ms
+startup config at 0 ms
+startup pictures at 0 ms
+startup windows at 2 ms
+startup tray at 8 ms
+startup hook at 14 ms
+startup ready at 14 ms
+elements 14 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EAnim; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 318, top: 420, right: 440, bottom: 660 }, Rect { left: 298, top: 420, right: 440, bottom: 660 }, Rect { left: 120, top: 420, right: 440, bottom: 660 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 5 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+wheel 120 -> Redraw frame Some(Rect { left: 120, top: 100, right: 376, bottom: 400 })
+wheel 120 -> Redraw frame Some(Rect { left: 120, top: 100, right: 520, bottom: 356 })
+wheel 120 -> Redraw frame Some(Rect { left: 120, top: 100, right: 520, bottom: 400 })
+wheel 120 -> Redraw frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+wheel 120 -> Nothing frame Some(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+outcome Confirm(Rect { left: 0, top: 0, right: 1024, bottom: 768 })
+borderless access: Ok(2)
+border required now: Ok(false)
+recording start took 131 ms
+startup start at 0 ms
+startup theme at 0 ms
+startup config at 0 ms
+startup pictures at 1 ms
+startup windows at 2 ms
+startup tray at 9 ms
+startup hook at 14 ms
+startup ready at 15 ms
+elements 14 ms: hwnd 0 uia 0 pixel 3 | uia true deepest E2EPattern; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 100, right: 376, bottom: 356 }, Rect { left: 120, top: 100, right: 376, bottom: 400 }, Rect { left: 120, top: 100, right: 520, bottom: 356 }, Rect { left: 120, top: 100, right: 520, bottom: 400 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 5 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EAnim; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 420, right: 160, bottom: 660 }, Rect { left: 120, top: 420, right: 180, bottom: 660 }, Rect { left: 120, top: 420, right: 440, bottom: 660 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 131, top: 431, right: 331, bottom: 581 })
+borderless access: Ok(2)
+border required now: Ok(false)
+recording start took 158 ms
+elements 4 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EAnim; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 314, top: 420, right: 440, bottom: 660 }, Rect { left: 294, top: 420, right: 440, bottom: 660 }, Rect { left: 120, top: 420, right: 440, bottom: 660 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+elements 3 ms: hwnd 0 uia 0 pixel 2 | uia true deepest E2EAnim; [0 kids off 0 norect 0 outside 0] 
+chain now Some([Rect { left: 120, top: 420, right: 294, bottom: 660 }, Rect { left: 120, top: 420, right: 314, bottom: 660 }, Rect { left: 120, top: 420, right: 440, bottom: 660 }, Rect { left: 0, top: 0, right: 1024, bottom: 768 }])
+outcome Confirm(Rect { left: 131, top: 431, right: 331, bottom: 581 })
+borderless access: Ok(2)
+border required now: Ok(false)
+recording start took 127 ms
+microphone unavailable: Element not found. (0x80070490)
+borderless access: Ok(2)
+border required now: Ok(false)
+recording start took 181 ms
+startup start at 0 ms
+preview decoder: 640x360
+strips: 16 thumbnails in 1144 ms
+preview sound off: Element not found. (0x80070490)
+preview: 52.1 fps, decode 1.4 ms, compose 1.2 ms, 596x335
+video exported: C:\Users\runneradmin\Pictures\Snap\ve-src edit.mp4
+startup start at 0 ms
+microphone unavailable: Element not found. (0x80070490)
+borderless access: Ok(2)
+border required now: Ok(false)
+recording start took 139 ms
+startup start at 0 ms
+startup start at 0 ms
+startup start at 0 ms
+startup start at 0 ms
+preview decoder: 640x360
+strips: 16 thumbnails in 1212 ms
+startup start at 0 ms
+startup theme at 4020 ms
+startup config at 4020 ms
+startup pictures at 4021 ms
+startup windows at 4023 ms
+startup tray at 4029 ms
+startup hook at 4035 ms

@@ -1,0 +1,454 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded strict-num v0.1.1
+  Downloaded cpufeatures v0.2.17
+  Downloaded generic-array v0.14.7
+  Downloaded ndarray v0.17.2
+  Downloaded adler2 v2.0.1
+  Downloaded color_quant v1.1.0
+  Downloaded log v0.4.34
+  Downloaded autocfg v1.5.1
+  Downloaded flate2 v1.1.10
+  Downloaded windows-collections v0.3.2
+  Downloaded cfg-if v1.0.5
+  Downloaded crypto-common v0.1.7
+  Downloaded version_check v0.9.5
+  Downloaded serde_spanned v1.1.2
+  Downloaded equivalent v1.0.3
+  Downloaded matrixmultiply v0.3.11
+  Downloaded rawpointer v0.2.1
+  Downloaded ab_glyph v0.2.32
+  Downloaded digest v0.10.7
+  Downloaded ab_glyph_rasterizer v0.1.10
+  Downloaded owned_ttf_parser v0.25.1
+  Downloaded windows-interface v0.59.3
+  Downloaded block-buffer v0.10.4
+  Downloaded windows-link v0.2.1
+  Downloaded windows-numerics v0.3.1
+  Downloaded arrayref v0.3.9
+  Downloaded arrayvec v0.7.8
+  Downloaded quote v1.0.47
+  Downloaded serde_derive v1.0.229
+  Downloaded windows-threading v0.2.1
+  Downloaded windows-implement v0.60.2
+  Downloaded windows-result v0.4.1
+  Downloaded fdeflate v0.3.7
+  Downloaded num-integer v0.1.47
+  Downloaded windows-future v0.3.2
+  Downloaded ort-sys v2.0.0-rc.15
+  Downloaded num-complex v0.4.6
+  Downloaded simd-adler32 v0.3.10
+  Downloaded sha2 v0.10.9
+  Downloaded toml_writer v1.1.3+spec-1.1.0
+  Downloaded crc32fast v1.5.3
+  Downloaded smallvec v1.16.4
+  Downloaded weezl v0.1.12
+  Downloaded libloading v0.9.0
+  Downloaded toml_datetime v1.1.2+spec-1.1.0
+  Downloaded gif v0.14.2
+  Downloaded pin-project-lite v0.2.17
+  Downloaded tiny-skia-path v0.11.4
+  Downloaded toml_parser v1.1.5+spec-1.1.0
+  Downloaded once_cell v1.21.4
+  Downloaded windows-strings v0.5.1
+  Downloaded bitflags v2.13.2
+  Downloaded num-traits v0.2.19
+  Downloaded proc-macro2 v1.0.107
+  Downloaded serde_core v1.0.229
+  Downloaded toml v1.1.8+spec-1.1.0
+  Downloaded unicode-ident v1.0.27
+  Downloaded windows-core v0.62.2
+  Downloaded bytemuck v1.25.2
+  Downloaded miniz_oxide v0.9.1
+  Downloaded tracing-core v0.1.36
+  Downloaded miniz_oxide v0.8.9
+  Downloaded serde v1.0.229
+  Downloaded typenum v1.20.1
+  Downloaded indexmap v2.14.2
+  Downloaded hashbrown v0.17.1
+  Downloaded png v0.18.1
+  Downloaded tiny-skia v0.11.4
+  Downloaded ort v2.0.0-rc.15
+  Downloaded winnow v1.0.4
+  Downloaded zlib-rs v0.6.8
+  Downloaded ttf-parser v0.25.1
+  Downloaded syn v2.0.119
+  Downloaded syn v3.0.9
+  Downloaded tracing v0.1.44
+  Downloaded windows v0.62.2
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling windows-link v0.2.1
+   Compiling crc32fast v1.5.3
+   Compiling version_check v0.9.5
+   Compiling simd-adler32 v0.3.10
+   Compiling generic-array v0.14.7
+   Compiling serde_core v1.0.229
+   Compiling adler2 v2.0.1
+   Compiling windows-strings v0.5.1
+   Compiling windows-result v0.4.1
+   Compiling typenum v1.20.1
+   Compiling cfg-if v1.0.5
+   Compiling miniz_oxide v0.9.1
+   Compiling syn v2.0.119
+   Compiling miniz_oxide v0.8.9
+   Compiling flate2 v1.1.10
+   Compiling fdeflate v0.3.7
+   Compiling ort-sys v2.0.0-rc.15
+   Compiling bitflags v2.13.2
+   Compiling png v0.18.1
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling syn v3.0.9
+   Compiling windows-threading v0.2.1
+   Compiling ttf-parser v0.25.1
+   Compiling winnow v1.0.4
+   Compiling arrayref v0.3.9
+   Compiling serde v1.0.229
+   Compiling strict-num v0.1.1
+   Compiling bytemuck v1.25.2
+   Compiling tiny-skia-path v0.11.4
+   Compiling windows-interface v0.59.3
+   Compiling windows-implement v0.60.2
+   Compiling serde_derive v1.0.229
+   Compiling owned_ttf_parser v0.25.1
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling windows-core v0.62.2
+   Compiling windows-collections v0.3.2
+   Compiling windows-future v0.3.2
+   Compiling windows-numerics v0.3.1
+   Compiling rengi-snap v0.9.0 (D:\a\rng-snap\rng-snap)
+   Compiling digest v0.10.7
+   Compiling serde_spanned v1.1.2
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling libloading v0.9.0
+   Compiling weezl v0.1.12
+   Compiling color_quant v1.1.0
+   Compiling ab_glyph_rasterizer v0.1.10
+   Compiling smallvec v1.16.4
+   Compiling log v0.4.34
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling arrayvec v0.7.8
+   Compiling cpufeatures v0.2.17
+   Compiling sha2 v0.10.9
+   Compiling tiny-skia v0.11.4
+   Compiling toml v1.1.8+spec-1.1.0
+   Compiling ort v2.0.0-rc.15
+   Compiling ab_glyph v0.2.32
+   Compiling gif v0.14.2
+   Compiling windows v0.62.2
+warning: method `area` is never used
+  --> src\bin\..\geom.rs:85:12
+   |
+24 | impl Rect {
+   | --------- method in this implementation
+...
+85 |     pub fn area(&self) -> i64 {
+   |            ^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `opaque_bgra` is never used
+  --> src\bin\..\image.rs:51:12
+   |
+13 | impl Frame {
+   | ---------- method in this implementation
+...
+51 |     pub fn opaque_bgra(&self) -> Vec<u8> {
+   |            ^^^^^^^^^^^
+
+warning: fields `fps` and `duration` are never read
+  --> src\bin\..\win\mp4read.rs:21:9
+   |
+13 | pub struct Reader {
+   |            ------ fields in this struct
+...
+21 |     pub fps: (u32, u32),
+   |         ^^^
+22 |     /// Length in 100 ns units (0 if unknown).
+23 |     pub duration: i64,
+   |         ^^^^^^^^
+
+warning: function `seek_to` is never used
+  --> src\bin\..\win\mp4read.rs:45:4
+   |
+45 | fn seek_to(r: &IMFSourceReader, t: i64) -> bool {
+   |    ^^^^^^^
+
+warning: associated items `open_with`, `fps_round`, and `seek` are never used
+   --> src\bin\..\win\mp4read.rs:105:12
+    |
+ 98 | impl Reader {
+    | ----------- associated items in this implementation
+...
+105 |     pub fn open_with(path: &Path, opts: Opts) -> Result<Reader, String> {
+    |            ^^^^^^^^^
+...
+174 |     pub fn fps_round(&self) -> u32 {
+    |            ^^^^^^^^^
+...
+179 |     pub fn seek(&mut self, t: i64) -> bool {
+    |            ^^^^
+
+warning: struct `AudioReader` is never constructed
+   --> src\bin\..\win\mp4read.rs:239:12
+    |
+239 | pub struct AudioReader {
+    |            ^^^^^^^^^^^
+
+warning: associated items `open`, `seek`, and `next` are never used
+   --> src\bin\..\win\mp4read.rs:246:12
+    |
+245 | impl AudioReader {
+    | ---------------- associated items in this implementation
+246 |     pub fn open(path: &Path) -> Result<AudioReader, String> {
+    |            ^^^^
+...
+267 |     pub fn seek(&mut self, t: i64) -> bool {
+    |            ^^^^
+...
+272 |     pub fn next(&mut self) -> Option<(i64, Vec<i16>)> {
+    |            ^^^^
+
+warning: method `translate_all` is never used
+   --> src\annot\edit.rs:655:12
+    |
+120 | impl Canvas {
+    | ----------- method in this implementation
+...
+655 |     pub fn translate_all(&mut self, dx: f32, dy: f32) {
+    |            ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `size` is never used
+  --> src\gifenc.rs:74:12
+   |
+66 | impl<W: Write> GifWriter<W> {
+   | --------------------------- method in this implementation
+...
+74 |     pub fn size(&self) -> (u32, u32) {
+   |            ^^^^
+
+warning: method `area` is never used
+  --> src\regions.rs:60:12
+   |
+33 | impl EdgeMap {
+   | ------------ method in this implementation
+...
+60 |     pub fn area(&self) -> Rect {
+   |            ^^^^
+
+warning: function `round_rect` is never used
+   --> src\win\d2d.rs:202:8
+    |
+202 | pub fn round_rect(r: D2D_RECT_F, radius: f32) -> D2D1_ROUNDED_RECT {
+    |        ^^^^^^^^^^
+
+warning: function `cursor_pos` is never used
+  --> src\win\files.rs:92:8
+   |
+92 | pub fn cursor_pos() -> (i32, i32) {
+   |        ^^^^^^^^^^
+
+warning: method `is_visible` is never used
+   --> src\win\home.rs:227:12
+    |
+191 | impl Home {
+    | --------- method in this implementation
+...
+227 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+
+warning: method `is_visible` is never used
+   --> src\win\recbar.rs:209:12
+    |
+ 56 | impl RecBar {
+    | ----------- method in this implementation
+...
+209 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+
+warning: field `audio` is never read
+  --> src\win\record\mod.rs:56:9
+   |
+50 | pub struct Summary {
+   |            ------- field in this struct
+...
+56 |     pub audio: bool,
+   |         ^^^^^
+
+warning: variant `SaveTo` is never constructed
+  --> src\win\toolstrip.rs:27:5
+   |
+13 | pub enum Btn {
+   |          --- variant in this enum
+...
+27 |     SaveTo,
+   |     ^^^^^^
+   |
+   = note: `Btn` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `to_point` is never used
+  --> src\win\util.rs:13:8
+   |
+13 | pub fn to_point(p: POINT) -> Point {
+   |        ^^^^^^^^
+
+warning: function `pcwstr` is never used
+  --> src\win\util.rs:26:8
+   |
+26 | pub fn pcwstr(buf: &[u16]) -> PCWSTR {
+   |        ^^^^^^
+
+warning: field `bar` is never read
+   --> src\win\veditor.rs:137:5
+    |
+136 | struct Lay {
+    |        --- field in this struct
+137 |     bar: f32,
+    |     ^^^
+    |
+    = note: `Lay` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `rengi-snap` (bin "e2e" test) generated 7 warnings
+warning: `rengi-snap` (bin "Snap" test) generated 12 warnings
+    Finished `release` profile [optimized] target(s) in 2m 33s
+     Running unittests src\main.rs (target\release\deps\Snap-a737844db745cc9e.exe)
+
+running 110 tests
+test annot::edit::tests::click_inside_rect_does_not_select_it ... ok
+test annot::edit::tests::crop_apply_and_undo ... ok
+test annot::edit::tests::draw_arrow_undo_redo ... ok
+test annot::edit::tests::drawing_is_clamped_to_bounds ... ok
+test annot::edit::tests::empty_text_leaves_nothing ... ok
+test annot::edit::tests::pen_collects_points ... ok
+test annot::edit::tests::select_move_resize_delete ... ok
+test annot::edit::tests::shift_snaps ... ok
+test annot::edit::tests::steps_and_recolor ... ok
+test annot::edit::tests::text_typing_commit_and_reedit ... ok
+test annot::edit::tests::tiny_drag_makes_nothing ... ok
+test annot::edit::tests::topmost_wins ... ok
+test annot::render::demo::demo_sheet ... ignored
+test annot::render::tests::blur_and_pixelate_reduce_detail ... ok
+test annot::icons::tests::every_icon_has_ink ... ok
+test annot::render::tests::frame_round_trip ... ok
+test annot::render::tests::highlighter_multiplies ... ok
+test annot::render::tests::arrow_lands_on_its_line_only ... ok
+test annot::render::tests::clip_offsets_items ... ok
+test config::tests::file_names_do_not_overwrite ... ok
+test config::tests::defaults_round_trip ... ok
+test annot::render::tests::rect_is_an_outline ... ok
+test config::tests::hotkey_labels ... ok
+test config::tests::garbage_falls_back ... ok
+test config::tests::recent_folders_dedupe_and_cap ... ok
+test config::tests::save_folder_default ... ok
+test config::tests::scroll_lock_moves_to_the_new_default ... ok
+test config::tests::video_settings ... ok
+test cutout::tests::cutout_real_models_find_the_circle ... ignored
+test cutout::tests::cutout_real_photo ... ignored
+test cutout::tests::cut_crops_to_the_object_with_straight_alpha ... ok
+test cutout::tests::edge_is_strongest_on_the_boundary ... ok
+test cutout::tests::sticker_adds_a_white_outline_and_shadow ... ok
+test cutout::tests::tidy_drops_specks_and_fills_small_holes ... ok
+test cutout::tests::choose_prefers_the_larger_settled_object_when_close ... ok
+test geom::tests::contains_is_half_open ... ok
+test geom::tests::from_points_normalizes ... ok
+test geom::tests::intersect_and_clamp ... ok
+test gifenc::tests::caps_rate_and_round_trips ... ok
+test gifenc::tests::scale_averages ... ok
+test gifenc::tests::sizes ... ok
+test icon::tests::icon_shape ... ok
+test image::tests::crop_clips_and_copies_rows ... ok
+test image::tests::gif_first_frame ... ok
+test image::tests::hex ... ok
+test image::tests::pixel_lookup ... ok
+test image::tests::png_decodes_back_to_the_same_pixels ... ok
+test image::tests::png_round_trips ... ok
+test mixer::tests::breaks_and_drift_resync ... ok
+test cutout::tests::upscale_maps_low_res_onto_the_picture ... ok
+test mixer::tests::late_samples_are_dropped ... ok
+test mixer::tests::mixes_two_sources_and_clamps ... ok
+test mixer::tests::nothing_before_target ... ok
+test mixer::tests::places_by_position_and_fills_gaps ... ok
+test palette::tests::accent_works_as_a_button_and_as_text ... ok
+test cutout::tests::prepare_scales_normalizes_and_pads ... ok
+test palette::tests::over_and_contrast_basics ... ok
+test palette::tests::glass_text_is_readable_over_anything ... ok
+test palette::tests::secondary_text_is_readable_on_solid_surfaces ... ok
+test recent::tests::ages ... ok
+test recent::tests::shortens_in_the_middle ... ok
+test regions::tests::edge_flush_sidebar ... ok
+test regions::tests::finds_button_then_card ... ok
+test regions::tests::finds_card_from_its_text ... ok
+test mixer::tests::jittery_packets_stay_seamless ... ok
+test regions::tests::flat_area_gives_nothing ... ok
+test regions::tests::gradient_is_not_an_edge ... ok
+test regions::tests::rounded_corners_still_count ... ok
+test regions::tests::no_box_borrowing_the_area_edge ... ok
+test select::tests::click_confirms_window ... ok
+test select::tests::click_outside_edited_frame_starts_new_drag ... ok
+test regions::tests::sub_area_only ... ok
+test select::tests::click_uses_current_level ... ok
+test select::tests::ctrl_release_then_edit_and_enter ... ok
+test select::tests::drag_backwards_and_clipped ... ok
+test select::tests::drag_confirms_frame ... ok
+test select::tests::elements_for_another_window_are_ignored ... ok
+test select::tests::elements_refine_and_wheel_walks_levels ... ok
+test select::tests::escape_cancels_anywhere ... ok
+test select::tests::hover_suggests_topmost_window ... ok
+test select::tests::resize_past_opposite_edge_flips ... ok
+test select::tests::tiny_drag_with_no_window_returns_to_hover ... ok
+test select::tests::window_level_sticks_while_moving ... ok
+test vedit::bench::compose_speed ... ignored
+test vedit::tests::audio_helpers ... ok
+test vedit::tests::coarse_to_fine_covers_everything_once ... ok
+test annot::render::tests::text_and_steps_draw_with_a_font ... ok
+test vedit::tests::edited_names_do_not_overwrite ... ok
+test vedit::tests::fit_shrinks_only ... ok
+test recent::tests::lists_newest_captures_only ... ok
+test vedit::tests::compose_passes_through_and_zooms ... ok
+test vedit::tests::items_fade_and_steps_keep_numbers ... ok
+test vedit::tests::split_delete_move_trim ... ok
+test vedit::tests::ruler_steps_keep_labels_apart ... ok
+test vedit::tests::locate_end_shows_last_frame ... ok
+test vedit::tests::time_view_zooms_around_the_cursor_and_stays_inside ... ok
+test vedit::tests::compose_draws_items_scaled_and_faded ... ok
+test vedit::tests::zoom_rect_is_clamped_and_not_tiny ... ok
+test vedit::tests::zoom_eases_in_holds_and_eases_out ... ok
+test videoplan::tests::bitrate_scales_and_caps ... ok
+test videoplan::tests::downscale_only ... ok
+test videoplan::tests::even_rounding ... ok
+test videoplan::tests::h264_where_it_fits ... ok
+test videoplan::tests::hevc_above_the_limit ... ok
+test videoplan::tests::no_hevc_drops_rate ... ok
+test win::download::tests::splits_urls ... ok
+test win::files::tests::labels ... ok
+test winres::tests::version_info_layout ... ok
+test winres::tests::ico_has_a_directory_entry_per_size ... ok
+test winres::tests::res_entries_are_aligned_and_typed ... ok
+
+test result: ok. 106 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src\bin\demo.rs (target\release\deps\demo-2d2a40e8fda6b315.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\e2e.rs (target\release\deps\e2e-a7ca6146fd6daded.exe)
+
+running 9 tests
+test geom::tests::contains_is_half_open ... ok
+test geom::tests::from_points_normalizes ... ok
+test geom::tests::intersect_and_clamp ... ok
+test image::tests::crop_clips_and_copies_rows ... ok
+test image::tests::gif_first_frame ... ok
+test image::tests::hex ... ok
+test image::tests::pixel_lookup ... ok
+test image::tests::png_round_trips ... ok
+test image::tests::png_decodes_back_to_the_same_pixels ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
