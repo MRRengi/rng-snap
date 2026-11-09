@@ -2,11 +2,11 @@
 //! for a position, or plays in real time) and the strip maker (thumbnails and
 //! the audio waveform for the timeline).
 
-use super::mp4read::{AudioReader, Reader};
+use super::mp4read::{AudioReader, Opts, Reader};
 use crate::annot::Item;
 use crate::annot::font::Fonts;
 use crate::image::Frame;
-use crate::vedit::{self, Cam, Composer, Timeline};
+use crate::vedit::{self, Cam, Composer, Timeline, coarse_to_fine, fit};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -60,9 +60,12 @@ impl Player {
             unsafe {
                 let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
             }
-            // COM objects stay on the thread that made them.
-            let Ok(reader) = Reader::open(&src) else { return };
-            Worker { reader, view, fonts, sh, notify: hw, msg, composer: Composer::default(), raw: None, next: None }.run(rx)
+            // COM objects stay on the thread that made them. GPU decode, and
+            // big sources (4K) come in at most 1920x1080: plenty for a preview.
+            let size = Reader::open(&src).ok().map(|r| fit(r.w, r.h, 1920, 1080)).filter(|&(w, h)| w > 0 && h > 0);
+            let Ok(reader) = Reader::open_with(&src, Opts { gpu: true, size }) else { return };
+            super::util::log(&format!("preview decoder: {}x{}", reader.w, reader.h));
+            Worker { reader, view, fonts, sh, notify: hw, msg, composer: Composer::default(), raw: None, next: None, stats: Stats::default() }.run(rx)
         });
         let p = Player { tx, shared };
         p.send(Cmd::Show(0));
@@ -89,6 +92,39 @@ struct Worker {
     /// Last decoded source frame: (clip, timestamp 100 ns, frame).
     raw: Option<(usize, i64, Arc<Frame>)>,
     next: Option<(i64, Frame)>,
+    stats: Stats,
+}
+
+/// Playback timings, logged in test runs (RENGI_SNAP_HOME) every 2 s.
+#[derive(Default)]
+struct Stats {
+    since: Option<Instant>,
+    frames: u32,
+    decode: Duration,
+    compose: Duration,
+}
+
+impl Stats {
+    fn add(&mut self, decode: Duration, compose: Duration, w: u32, h: u32) {
+        if std::env::var_os("RENGI_SNAP_HOME").is_none() {
+            return;
+        }
+        let since = *self.since.get_or_insert_with(Instant::now);
+        self.frames += 1;
+        self.decode += decode;
+        self.compose += compose;
+        let el = since.elapsed();
+        if el >= Duration::from_secs(2) {
+            let n = self.frames.max(1);
+            super::util::log(&format!(
+                "preview: {:.1} fps, decode {:.1} ms, compose {:.1} ms, {w}x{h}",
+                self.frames as f32 / el.as_secs_f32(),
+                self.decode.as_secs_f32() * 1000.0 / n as f32,
+                self.compose.as_secs_f32() * 1000.0 / n as f32
+            ));
+            *self = Stats::default();
+        }
+    }
 }
 
 impl Worker {
@@ -162,6 +198,7 @@ impl Worker {
 
     /// Decodes (if needed), composes and publishes the frame for output time `t`.
     fn show(&mut self, t: u32) {
+        let t_dec = Instant::now();
         let (clip, src_ms) = self.view.timeline.locate(t);
         let src = src_ms as i64 * 10_000;
         let half = 5_000_000 * self.reader.fps.1 as i64 / self.reader.fps.0.max(1) as i64;
@@ -186,7 +223,13 @@ impl Worker {
             }
         }
         let Some((_, _, raw)) = &self.raw else { return };
+        let decode = t_dec.elapsed();
+        let t_comp = Instant::now();
         let out = self.composer.compose(raw, &self.view.items, t, self.view.ow.max(2), self.view.oh.max(2), self.fonts.as_deref());
+        if self.sh.playing.load(Ordering::Acquire) {
+            let (w, h) = (out.width() as u32, out.height() as u32);
+            self.stats.add(decode, t_comp.elapsed(), w, h);
+        }
         if let Ok(mut g) = self.sh.frame.lock() {
             *g = Some((t, Arc::new(out)));
         }
@@ -198,7 +241,7 @@ impl Worker {
     }
 }
 
-/// Timeline strips: small frames every `step_ms` of source time, and the
+/// Timeline strips: small frames across the source (sorted by time), and the
 /// audio peaks every PEAK_MS.
 #[derive(Default)]
 pub struct Strips {
@@ -237,31 +280,50 @@ pub fn make_strips(src: PathBuf, duration_ms: u32, thumb_h: u32, strips: Arc<Str
             }
             post();
         }
-        let Ok(mut r) = Reader::open(&src) else {
+        // Frames: seek to each slot (keyframe, then forward to it) at a small
+        // size the video processor makes, filling the whole length first.
+        let Ok(probe) = Reader::open(&src) else {
             strips.done.store(true, Ordering::Release);
             return;
         };
-        let step = (duration_ms / 240).max(250);
         let th = thumb_h.max(8);
-        let tw = ((r.w as f32 / r.h.max(1) as f32) * th as f32).round().max(8.0) as u32;
-        let mut next_at = 0u32;
+        let tw = ((probe.w as f32 / probe.h.max(1) as f32) * th as f32).round().max(8.0) as u32;
+        drop(probe);
+        let Ok(mut r) = Reader::open_with(&src, Opts { gpu: true, size: Some((tw, th)) }) else {
+            strips.done.store(true, Ordering::Release);
+            return;
+        };
+        let n = ((duration_ms / 250) as usize).clamp(2, 240);
+        let started = Instant::now();
         let mut last_post = Instant::now();
-        while let Some((ts, f)) = r.next() {
+        for slot in coarse_to_fine(n) {
+            let target = (duration_ms as u64 * slot as u64 / n as u64) as i64 * 10_000;
+            r.seek(target);
+            let mut got = None;
+            while let Some((ts, f)) = r.next() {
+                let done = ts + 5_000_000 / 30 >= target;
+                got = Some((ts, f));
+                if done {
+                    break;
+                }
+            }
+            let Some((ts, f)) = got else { continue };
+            let small = if f.width() as u32 == tw && f.height() as u32 == th { f } else { vedit::resample(&f, Cam::full(f.width() as f32, f.height() as f32), tw, th) };
             let ms = (ts / 10_000).max(0) as u32;
-            if ms + 1 < next_at {
-                continue;
-            }
-            let small = vedit::resample(&f, Cam::full(f.width() as f32, f.height() as f32), tw, th);
             if let Ok(mut g) = strips.thumbs.lock() {
-                g.push((ms, Arc::new(small)));
+                let at = g.partition_point(|(m, _)| *m < ms);
+                if g.get(at).map(|(m, _)| *m) != Some(ms) {
+                    g.insert(at, (ms, Arc::new(small)));
+                }
             }
-            next_at = ms + step;
-            if last_post.elapsed() > Duration::from_millis(250) {
+            if last_post.elapsed() > Duration::from_millis(120) {
                 post();
                 last_post = Instant::now();
             }
         }
+        super::util::log(&format!("strips: {n} thumbnails in {} ms", started.elapsed().as_millis()));
         strips.done.store(true, Ordering::Release);
         post();
     });
 }
+

@@ -1746,6 +1746,43 @@ mod e2e {
                     let src_pt = |x: f32, y: f32| (pic.left + (x * k) as i32, pic.top + (y * k) as i32);
                     rep.line(&format!("VE client {cl:?}, preview {pic:?} x{k:.3}, ruler {ruler:?}"));
                     screenshot(&rep.dir, "ve0-editor");
+                    let log_now = || std::fs::read_to_string(home.join("log.txt")).unwrap_or_default();
+                    // VP: playback speed, thumbnails, tooltips, hover preview, zoom.
+                    tap(VK_SPACE);
+                    sleep(2600);
+                    tap(VK_SPACE);
+                    sleep(400);
+                    let lg = log_now();
+                    let perf = lg.lines().filter(|l| l.contains("preview:")).last().unwrap_or("").to_string();
+                    let fps = perf.split("preview: ").nth(1).and_then(|r| r.split(' ').next()).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                    rep.line(&format!("VP {} | {}", lg.lines().filter(|l| l.contains("preview decoder") || l.contains("strips:")).collect::<Vec<_>>().join(" | "), perf));
+                    rep.check("VP preview plays smoothly (25+ fps)", fps >= 25.0, &format!("{fps:.1} fps"));
+                    rep.check("VP timeline thumbnails are ready within 4 s", lg.contains("strips:"), "");
+                    let play = ui("veditor.play").unwrap_or_default();
+                    move_to(play.left + play.width() / 2, play.top + play.height() / 2);
+                    sleep(1000);
+                    rep.check("VP a tooltip explains the play button", ui("veditor.tooltip").is_some(), "");
+                    screenshot(&rep.dir, "vp1-tooltip");
+                    move_to(xt(2600, 4000), clips_y);
+                    sleep(500);
+                    move_to(xt(2650, 4000), clips_y);
+                    sleep(700);
+                    rep.check("VP hovering the timeline shows that frame", ui("veditor.hoverpreview").is_some(), "");
+                    screenshot(&rep.dir, "vp2-hover-preview");
+                    key(VK_CONTROL, false);
+                    for _ in 0..4 {
+                        wheel(true);
+                        sleep(60);
+                    }
+                    key(VK_CONTROL, true);
+                    sleep(500);
+                    let view = ui("veditor.view").unwrap_or_default();
+                    rep.check("VP Ctrl+wheel zooms the timeline", view.top > 150, &format!("zoom x{:.2}, start {} ms", view.top as f32 / 100.0, view.left));
+                    screenshot(&rep.dir, "vp3-zoomed");
+                    click_ui("veditor.zoomfit");
+                    sleep(400);
+                    let view = ui("veditor.view").unwrap_or_default();
+                    rep.check("VP Fit shows the whole video again", view.top == 100 && view.left == 0, &format!("{view:?}"));
                     click_at(xt(1000, 4000), ruler_y);
                     sleep(300);
                     tap(VK_S);

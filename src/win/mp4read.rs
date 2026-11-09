@@ -12,6 +12,8 @@ use windows::core::HSTRING;
 
 pub struct Reader {
     r: IMFSourceReader,
+    /// Keeps the GPU decoder's device alive.
+    _gpu: Option<IMFDXGIDeviceManager>,
     pub w: u32,
     pub h: u32,
     bottom_up: bool,
@@ -62,14 +64,93 @@ fn open_reader(path: &Path, video_processing: bool) -> Result<IMFSourceReader, S
     }
 }
 
+/// A Direct3D 11 device for hardware decoding, behind an MF device manager.
+fn gpu_manager() -> Option<IMFDXGIDeviceManager> {
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+    use windows::Win32::Graphics::Direct3D11::*;
+    unsafe {
+        let mut dev = None;
+        D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, None, D3D11_SDK_VERSION, Some(&mut dev), None, None).ok()?;
+        let dev: ID3D11Device = dev?;
+        if let Ok(mt) = windows::core::Interface::cast::<ID3D11Multithread>(&dev) {
+            let _ = mt.SetMultithreadProtected(true);
+        }
+        let mut token = 0u32;
+        let mut mgr = None;
+        MFCreateDXGIDeviceManager(&mut token, &mut mgr).ok()?;
+        let mgr = mgr?;
+        mgr.ResetDevice(&dev, token).ok()?;
+        Some(mgr)
+    }
+}
+
+/// How a reader decodes.
+#[derive(Clone, Copy, Default)]
+pub struct Opts {
+    /// Decode on the GPU when there is one (falls back to the CPU).
+    pub gpu: bool,
+    /// Scale frames to this size while converting (the video processor does
+    /// it, on the GPU when `gpu`). None keeps the file's size.
+    pub size: Option<(u32, u32)>,
+}
+
 impl Reader {
     pub fn open(path: &Path) -> Result<Reader, String> {
+        Self::open_inner(path, Opts::default())
+    }
+
+    /// Fast reader for previews: GPU decode and scaling, falling back to the
+    /// plain one if the system can't.
+    pub fn open_with(path: &Path, opts: Opts) -> Result<Reader, String> {
+        if opts.gpu || opts.size.is_some() {
+            if let Ok(mut r) = Self::open_inner(path, opts) {
+                // Some drivers only fail on the first frame: try one.
+                if r.next().is_some() {
+                    r.seek(0);
+                    return Ok(r);
+                }
+            }
+            if opts.gpu {
+                if let Ok(mut r) = Self::open_inner(path, Opts { gpu: false, ..opts }) {
+                    if r.next().is_some() {
+                        r.seek(0);
+                        return Ok(r);
+                    }
+                }
+            }
+        }
+        Self::open_inner(path, Opts::default())
+    }
+
+    fn open_inner(path: &Path, opts: Opts) -> Result<Reader, String> {
         unsafe {
-            let r = open_reader(path, true)?;
+            let advanced = opts.gpu || opts.size.is_some();
+            let gpu = if opts.gpu { gpu_manager() } else { None };
+            let r = if advanced {
+                startup();
+                let mut attrs = None;
+                MFCreateAttributes(&mut attrs, 3).map_err(|e| e.to_string())?;
+                let attrs = attrs.ok_or("attributes")?;
+                attrs.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1).map_err(|e| e.to_string())?;
+                if let Some(m) = &gpu {
+                    attrs.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1).map_err(|e| e.to_string())?;
+                    attrs.SetUnknown(&MF_SOURCE_READER_D3D_MANAGER, m).map_err(|e| e.to_string())?;
+                }
+                MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), &attrs).map_err(|e| format!("open: {e}"))?
+            } else {
+                open_reader(path, true)?
+            };
             let _ = r.SetStreamSelection(AUDIO, false);
             let t = MFCreateMediaType().map_err(|e| e.to_string())?;
             t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).map_err(|e| e.to_string())?;
             t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32).map_err(|e| e.to_string())?;
+            if let Some((w, h)) = opts.size {
+                let (w, h) = (w.max(2) & !1, h.max(2) & !1);
+                t.SetUINT64(&MF_MT_FRAME_SIZE, ((w as u64) << 32) | h as u64).map_err(|e| e.to_string())?;
+                // Square pixels, the whole picture.
+                let _ = t.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1);
+            }
             r.SetCurrentMediaType(VIDEO, None, &t).map_err(|e| format!("rgb32: {e}"))?;
             let cur = r.GetCurrentMediaType(VIDEO).map_err(|e| e.to_string())?;
             let size = cur.GetUINT64(&MF_MT_FRAME_SIZE).map_err(|e| e.to_string())?;
@@ -80,7 +161,7 @@ impl Reader {
                 _ => (30, 1),
             };
             let duration = duration_of(&r);
-            Ok(Reader { r, w, h, bottom_up: stride < 0, fps, duration })
+            Ok(Reader { r, _gpu: gpu, w, h, bottom_up: stride < 0, fps, duration })
         }
     }
 
@@ -114,6 +195,21 @@ impl Reader {
             let Some(sample) = sample else { continue };
             unsafe {
                 let buf = sample.ConvertToContiguousBuffer().ok()?;
+                // GPU and padded buffers: copy row by row with their pitch.
+                if let Ok(b2) = windows::core::Interface::cast::<IMF2DBuffer>(&buf) {
+                    let mut scan0 = std::ptr::null_mut();
+                    let mut pitch = 0i32;
+                    if b2.Lock2D(&mut scan0, &mut pitch).is_ok() {
+                        let row = self.w as usize * 4;
+                        let mut pixels = Vec::with_capacity(row * self.h as usize);
+                        for y in 0..self.h as isize {
+                            let src = scan0.offset(y * pitch as isize);
+                            pixels.extend_from_slice(std::slice::from_raw_parts(src, row));
+                        }
+                        let _ = b2.Unlock2D();
+                        return Some((ts, Frame { rect: Rect::from_xywh(0, 0, self.w as i32, self.h as i32), pixels }));
+                    }
+                }
                 let mut ptr = std::ptr::null_mut();
                 let mut len = 0u32;
                 buf.Lock(&mut ptr, None, Some(&mut len)).ok()?;

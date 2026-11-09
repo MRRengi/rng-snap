@@ -540,8 +540,176 @@ pub fn clock(ms: u32) -> String {
     format!("{}:{:02}.{}", s / 60, s % 60, (ms % 1000) / 100)
 }
 
+/// `w x h` shrunk (never grown) to fit in `mw x mh`, even sizes.
+pub fn fit(w: u32, h: u32, mw: u32, mh: u32) -> (u32, u32) {
+    let k = (mw as f32 / w.max(1) as f32).min(mh as f32 / h.max(1) as f32).min(1.0);
+    (((w as f32 * k) as u32).max(2) & !1, ((h as f32 * k) as u32).max(2) & !1)
+}
+
+/// The order to fill `n` evenly spaced slots so the whole length is covered
+/// early and gets denser: 0, n/2, n/4, 3n/4, ...
+pub fn coarse_to_fine(n: usize) -> Vec<usize> {
+    let mut out = Vec::with_capacity(n);
+    let mut seen = vec![false; n];
+    let mut step = n.next_power_of_two();
+    while step >= 1 {
+        let mut i = 0;
+        while i < n {
+            if !seen[i] {
+                seen[i] = true;
+                out.push(i);
+            }
+            i += step;
+        }
+        if step == 1 {
+            break;
+        }
+        step /= 2;
+    }
+    out
+}
+
+/// The part of the timeline on screen: where it starts and how far it is
+/// zoomed in (1 = the whole video fits).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimeView {
+    pub start: f32,
+    pub zoom: f32,
+}
+
+/// Zoomed all the way in, the timeline still shows this much.
+pub const MIN_VISIBLE_MS: f32 = 500.0;
+
+impl Default for TimeView {
+    fn default() -> Self {
+        TimeView { start: 0.0, zoom: 1.0 }
+    }
+}
+
+impl TimeView {
+    pub fn max_zoom(total: u32) -> f32 {
+        (total as f32 / MIN_VISIBLE_MS).max(1.0)
+    }
+
+    /// Milliseconds on screen.
+    pub fn visible(&self, total: u32) -> f32 {
+        total.max(1) as f32 / self.zoom
+    }
+
+    /// Keeps zoom and start inside the video.
+    pub fn clamp(&mut self, total: u32) {
+        self.zoom = self.zoom.clamp(1.0, Self::max_zoom(total));
+        let room = (total as f32 - self.visible(total)).max(0.0);
+        self.start = self.start.clamp(0.0, room);
+    }
+
+    /// Zooms by `factor` keeping time `t` at the same place on screen
+    /// (`frac` of the width from the left).
+    pub fn zoom_at(&mut self, factor: f32, t: f32, frac: f32, total: u32) {
+        self.zoom *= factor;
+        self.clamp(total);
+        self.start = t - frac * self.visible(total);
+        self.clamp(total);
+    }
+
+    /// Moves the view so `t` is on screen (pages ahead while playing).
+    pub fn follow(&mut self, t: f32, total: u32) {
+        let vis = self.visible(total);
+        if t < self.start || t > self.start + vis {
+            self.start = t - vis * 0.1;
+            self.clamp(total);
+        }
+    }
+}
+
+/// Ruler spacing for `ms_per_px`: a labelled tick at least `min_px` apart
+/// and smaller ticks between them (both in ms).
+pub fn ruler_steps(ms_per_px: f32, min_px: f32) -> (u32, u32) {
+    const STEPS: [(u32, u32); 14] = [
+        (100, 20),
+        (200, 50),
+        (500, 100),
+        (1000, 250),
+        (2000, 500),
+        (5000, 1000),
+        (10_000, 2000),
+        (15_000, 5000),
+        (30_000, 5000),
+        (60_000, 10_000),
+        (120_000, 30_000),
+        (300_000, 60_000),
+        (600_000, 120_000),
+        (1_800_000, 300_000),
+    ];
+    STEPS.iter().copied().find(|(major, _)| *major as f32 / ms_per_px.max(1e-6) >= min_px).unwrap_or((3_600_000, 600_000))
+}
+
+/// Ruler label: "0:05", or "0:05.5" when ticks are under a second apart.
+pub fn ruler_label(ms: u32, major: u32) -> String {
+    let s = ms / 1000;
+    if major < 1000 { format!("{}:{:02}.{}", s / 60, s % 60, (ms % 1000) / 100) } else { format!("{}:{:02}", s / 60, s % 60) }
+}
+
+/// Precise time for the playhead bubble: "0:05.25".
+pub fn clock_fine(ms: u32) -> String {
+    let s = ms / 1000;
+    format!("{}:{:02}.{:02}", s / 60, s % 60, (ms % 1000) / 10)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn time_view_zooms_around_the_cursor_and_stays_inside() {
+        let total = 60_000;
+        let mut v = super::TimeView::default();
+        // Zoom 4x keeping 30 s at the middle of the screen.
+        v.zoom_at(4.0, 30_000.0, 0.5, total);
+        assert_eq!(v.visible(total), 15_000.0);
+        assert!((v.start - 22_500.0).abs() < 0.5, "{v:?}");
+        // Zooming near the start can't go before 0.
+        v.zoom_at(1.0, 0.0, 0.5, total);
+        assert_eq!(v.start, 0.0);
+        // Never further than 0.5 s on screen, never out past 1x.
+        v.zoom_at(10_000.0, 1000.0, 0.0, total);
+        assert_eq!(v.visible(total), super::MIN_VISIBLE_MS);
+        v.zoom_at(0.0001, 0.0, 0.0, total);
+        assert_eq!(v.zoom, 1.0);
+        // Following the playhead pages ahead.
+        let mut v = super::TimeView { start: 0.0, zoom: 6.0 };
+        v.follow(20_000.0, total);
+        assert!(v.start <= 20_000.0 && v.start + v.visible(total) >= 20_000.0);
+    }
+
+    #[test]
+    fn ruler_steps_keep_labels_apart() {
+        // 10 min across 1000 px: 0.6 s per px -> labels every minute or so.
+        let (major, minor) = super::ruler_steps(600.0, 70.0);
+        assert!(major as f32 / 600.0 >= 70.0 && minor < major);
+        // Zoomed in: 2 ms per px -> 200 ms labels with tenths.
+        assert_eq!(super::ruler_steps(2.0, 70.0).0, 200);
+        assert_eq!(super::ruler_label(1500, 200), "0:01.5");
+        assert_eq!(super::ruler_label(65_000, 5000), "1:05");
+        assert_eq!(super::clock_fine(65_250), "1:05.25");
+    }
+
+    #[test]
+    fn coarse_to_fine_covers_everything_once() {
+        for n in [1usize, 2, 3, 7, 16, 240] {
+            let o = super::coarse_to_fine(n);
+            let mut sorted = o.clone();
+            sorted.sort();
+            assert_eq!(sorted, (0..n).collect::<Vec<_>>(), "n={n}");
+        }
+        assert_eq!(&super::coarse_to_fine(8)[..4], &[0, 4, 2, 6]);
+    }
+
+    #[test]
+    fn fit_shrinks_only() {
+        assert_eq!(super::fit(3840, 2160, 1920, 1080), (1920, 1080));
+        assert_eq!(super::fit(1280, 720, 1920, 1080), (1280, 720));
+        assert_eq!(super::fit(1000, 3000, 1920, 1080), (360, 1080));
+    }
+
     use super::*;
     use crate::annot::{Color, PALETTE};
 

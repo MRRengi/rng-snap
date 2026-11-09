@@ -38,6 +38,16 @@ pub fn put(name: &str, r: Rect) {
     }
 }
 
+/// Forgets one control.
+pub fn remove(name: &str) {
+    if !enabled() {
+        return;
+    }
+    if MAP.with(|m| m.borrow_mut().remove(name).is_some()) {
+        write();
+    }
+}
+
 /// Forgets every control of one window (`prefix.`).
 pub fn clear(prefix: &str) {
     if !enabled() {

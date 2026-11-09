@@ -6,7 +6,7 @@
 use super::class_name;
 use super::d2d::{self, Gfx, rect_f, rgba};
 use super::mp4read::Reader;
-use super::theme::{self, Backdrop, Blur};
+use super::theme;
 use windows::core::Interface;
 use super::toolstrip::{Btn, Slot, Strip, StripState};
 use super::util::{lparam_point, log};
@@ -18,7 +18,7 @@ use crate::annot::font::{self, Fonts};
 use crate::annot::render::bbox;
 use crate::annot::{BlurMode, Color, Item, P, PALETTE, Shape, Tool};
 use crate::geom::{Point, Rect};
-use crate::vedit::{self, Cam, Clip, MIN_CLIP_MS, Timeline};
+use crate::vedit::{self, Cam, Clip, MIN_CLIP_MS, TimeView, Timeline};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,6 +29,7 @@ use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::IDWriteTextFormat;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -40,6 +41,10 @@ pub const WM_VSTRIPS: u32 = WM_APP + 41;
 const TICK_TIMER: usize = 1;
 const STATUS_TIMER: usize = 2;
 const ANIM_TIMER: usize = 3;
+/// A tooltip is due.
+const TIP_TIMER: usize = 4;
+/// Trim handles and the selected clip (Final Cut's yellow).
+const TRIM: u32 = 0xFFCC00;
 /// Pixels around a clip or bar edge that grab the edge instead of the body.
 const EDGE_PX: f32 = 7.0;
 
@@ -103,6 +108,19 @@ enum Drag {
     Clip { idx: usize, x0: f32, moved: bool, target: usize },
     Trim { idx: usize, right: bool, x0: f32, orig: Clip, ms_px: f32 },
     Span { idx: usize, mode: SpanMode, x0: f32, orig: (u32, u32), ms_px: f32 },
+    /// The zoom slider.
+    Zoom,
+    /// The scrollbar thumb under the tracks.
+    Scroll { x0: f32, start0: f32 },
+}
+
+/// What a tooltip is about: an id (so it restarts when the target changes),
+/// the text and the shortcut.
+#[derive(Clone, PartialEq)]
+struct Tip {
+    id: u32,
+    text: String,
+    key: &'static str,
 }
 
 struct Work {
@@ -125,9 +143,18 @@ struct Lay {
     play: D2D_RECT_F,
     split: D2D_RECT_F,
     delete: D2D_RECT_F,
+    /// Zoom controls: out, the slider, in, show all.
+    zout: D2D_RECT_F,
+    slider: D2D_RECT_F,
+    zin: D2D_RECT_F,
+    zfit: D2D_RECT_F,
     ruler: D2D_RECT_F,
+    /// Track names on the left.
+    head: D2D_RECT_F,
     clips: D2D_RECT_F,
+    audio: D2D_RECT_F,
     items: D2D_RECT_F,
+    scroll: D2D_RECT_F,
     x0: f32,
     x1: f32,
 }
@@ -166,9 +193,16 @@ pub struct VEditor {
     min_w: i32,
     /// Preview sound while playing.
     audio: Option<AudioPlay>,
-    scene: Option<(u32, u32, ID2D1BitmapRenderTarget)>,
-    blur: Blur,
     hover_ctl: Option<u8>,
+    /// Visible part of the timeline.
+    tv: TimeView,
+    /// Time under the cursor on the timeline (hover line and frame preview).
+    hover_t: Option<u32>,
+    hover_clip: Option<usize>,
+    tip: Option<Tip>,
+    tip_since: std::time::Instant,
+    status_at: std::time::Instant,
+    tracking: bool,
 }
 
 fn dpi_scale(h: HWND) -> f32 {
@@ -219,7 +253,9 @@ impl VEditor {
         let view = View { timeline: timeline.clone(), items: Vec::new(), ow: 640, oh: (640 * src_h / src_w.max(1)).max(2) };
         let player = Player::start(src.clone(), view, fonts, hwnd, WM_VFRAME)?;
         let strips = Arc::new(Strips::default());
-        make_strips(src.clone(), duration_ms, (44.0 * scale) as u32, strips.clone(), hwnd, WM_VSTRIPS);
+        // 135 px tall: sharp on the timeline and good enough as an instant
+        // preview while scrubbing.
+        make_strips(src.clone(), duration_ms, 135, strips.clone(), hwnd, WM_VSTRIPS);
         let last = Snap { timeline: timeline.clone(), items: Vec::new() };
         let mut ed = VEditor {
             hwnd,
@@ -254,9 +290,14 @@ impl VEditor {
             view_size: (0, 0),
             min_w: 0,
             audio: None,
-            scene: None,
-            blur: Blur::default(),
             hover_ctl: None,
+            tv: TimeView::default(),
+            hover_t: None,
+            hover_clip: None,
+            tip: None,
+            tip_since: std::time::Instant::now(),
+            status_at: std::time::Instant::now(),
+            tracking: false,
         };
         ed.strip.animate = true;
         ed.strip.layout(gfx, &VSLOTS, Point::new(0, 0), ed.bar_h(), 0, scale);
@@ -317,8 +358,9 @@ impl VEditor {
 
     pub fn set_status(&mut self, s: String) {
         self.status = s;
+        self.status_at = std::time::Instant::now();
         unsafe {
-            SetTimer(Some(self.hwnd), STATUS_TIMER, 4000, None);
+            SetTimer(Some(self.hwnd), STATUS_TIMER, 3000, None);
         }
         self.invalidate();
     }
@@ -328,7 +370,7 @@ impl VEditor {
         let (cw, ch) = self.client();
         let m = self.margin();
         let bar = self.bar_h() as f32 + m * 2.0;
-        let panel_h = 200.0 * s;
+        let panel_h = 252.0 * s;
         let sheet_top = (ch - panel_h - m).max(bar + 60.0 * s);
         let sheet = rect_f(m, sheet_top, cw - m, ch - m);
         let top = sheet.top;
@@ -337,19 +379,31 @@ impl VEditor {
         let k = (aw / self.src_w as f32).min(ah / self.src_h as f32);
         let (pw, ph) = (self.src_w as f32 * k, self.src_h as f32 * k);
         let pic = rect_f(((cw - pw) / 2.0).round(), (bar + (ah - ph) / 2.0).round(), ((cw + pw) / 2.0).round(), (bar + (ah + ph) / 2.0).round());
-        let x0 = sheet.left + 16.0 * s;
+        let left = sheet.left + 14.0 * s;
+        let head_w = 78.0 * s;
+        let x0 = left + head_w;
         let x1 = sheet.right - 16.0 * s;
         let tr = rect_f(sheet.left, top + 6.0 * s, sheet.right, top + 52.0 * s);
         let bh = 34.0 * s;
         let by = tr.top + (tr.bottom - tr.top - bh) / 2.0;
-        let play = rect_f(x0, by, x0 + bh, by + bh);
+        let play = rect_f(left, by, left + bh, by + bh);
         let delete = rect_f(x1 - 92.0 * s, by, x1, by + bh);
         let split = rect_f(delete.left - 6.0 * s - 96.0 * s, by, delete.left - 6.0 * s, by + bh);
-        let ruler = rect_f(x0, tr.bottom, x1, tr.bottom + 18.0 * s);
-        let clips = rect_f(x0, ruler.bottom + 2.0 * s, x1, ruler.bottom + 2.0 * s + 64.0 * s);
-        let items = rect_f(x0, clips.bottom + 8.0 * s, x1, clips.bottom + 8.0 * s + 40.0 * s);
+        // Zoom: [-] ----o---- [+] [fit], left of Split.
+        let zb = 26.0 * s;
+        let zy = by + (bh - zb) / 2.0;
+        let zfit = rect_f(split.left - 14.0 * s - zb, zy, split.left - 14.0 * s, zy + zb);
+        let zin = rect_f(zfit.left - 6.0 * s - zb, zy, zfit.left - 6.0 * s, zy + zb);
+        let slider = rect_f(zin.left - 4.0 * s - 96.0 * s, zy, zin.left - 4.0 * s, zy + zb);
+        let zout = rect_f(slider.left - 4.0 * s - zb, zy, slider.left - 4.0 * s, zy + zb);
+        let ruler = rect_f(x0, tr.bottom, x1, tr.bottom + 20.0 * s);
+        let clips = rect_f(x0, ruler.bottom + 2.0 * s, x1, ruler.bottom + 2.0 * s + 58.0 * s);
+        let audio = rect_f(x0, clips.bottom + 4.0 * s, x1, clips.bottom + 4.0 * s + 30.0 * s);
+        let items = rect_f(x0, audio.bottom + 8.0 * s, x1, audio.bottom + 8.0 * s + 44.0 * s);
+        let scroll = rect_f(x0, items.bottom + 8.0 * s, x1, items.bottom + 14.0 * s);
+        let head = rect_f(left, clips.top, x0 - 8.0 * s, items.bottom);
         let tr = rect_f(tr.left, top, tr.right, tr.bottom);
-        Lay { bar, sheet, pic, transport: tr, play, split, delete, ruler, clips, items, x0, x1 }
+        Lay { bar, sheet, pic, transport: tr, play, split, delete, zout, slider, zin, zfit, ruler, head, clips, audio, items, scroll, x0, x1 }
     }
 
     fn total(&self) -> u32 {
@@ -357,16 +411,39 @@ impl VEditor {
     }
 
     fn x_of(&self, l: &Lay, t: u32) -> f32 {
-        l.x0 + (l.x1 - l.x0) * t as f32 / self.total() as f32
+        l.x0 + (t as f32 - self.tv.start) / self.ms_per_px(l)
     }
 
     fn t_of(&self, l: &Lay, x: f32) -> u32 {
-        let k = ((x - l.x0) / (l.x1 - l.x0)).clamp(0.0, 1.0);
-        ((k * self.total() as f32) as u32).min(self.total().saturating_sub(1))
+        let t = self.tv.start + (x.clamp(l.x0, l.x1) - l.x0) * self.ms_per_px(l);
+        (t.max(0.0) as u32).min(self.total().saturating_sub(1))
     }
 
     fn ms_per_px(&self, l: &Lay) -> f32 {
-        self.total() as f32 / (l.x1 - l.x0).max(1.0)
+        self.tv.visible(self.total()) / (l.x1 - l.x0).max(1.0)
+    }
+
+    /// Zoom by `factor` around time `t` (kept where it is on screen).
+    fn zoom_by(&mut self, factor: f32, t: u32) {
+        let l = self.lay();
+        let frac = ((self.x_of(&l, t) - l.x0) / (l.x1 - l.x0).max(1.0)).clamp(0.0, 1.0);
+        let total = self.total();
+        self.tv.zoom_at(factor, t as f32, frac, total);
+        self.invalidate();
+    }
+
+    /// Slider position 0..1 for the zoom (log scale).
+    fn zoom_frac(&self) -> f32 {
+        let max = TimeView::max_zoom(self.total());
+        if max <= 1.0 { 0.0 } else { (self.tv.zoom.ln() / max.ln()).clamp(0.0, 1.0) }
+    }
+
+    fn set_zoom_frac(&mut self, k: f32) {
+        let max = TimeView::max_zoom(self.total());
+        let z = (k.clamp(0.0, 1.0) * max.ln()).exp();
+        let factor = z / self.tv.zoom;
+        let t = self.playhead;
+        self.zoom_by(factor, t);
     }
 
     /// Zoom tool or a selected zoom: show the whole frame to place zooms.
@@ -678,7 +755,13 @@ impl VEditor {
         super::uimap::put("veditor.delete", pr(l.delete));
         super::uimap::put("veditor.ruler", pr(l.ruler));
         super::uimap::put("veditor.clips", pr(l.clips));
+        super::uimap::put("veditor.audio", pr(l.audio));
         super::uimap::put("veditor.items", pr(l.items));
+        super::uimap::put("veditor.zoomout", pr(l.zout));
+        super::uimap::put("veditor.zoomslider", pr(l.slider));
+        super::uimap::put("veditor.zoomin", pr(l.zin));
+        super::uimap::put("veditor.zoomfit", pr(l.zfit));
+        super::uimap::put("veditor.heads", pr(l.head));
         super::uimap::put("veditor.pic", pr(l.pic));
         let vs = (((l.pic.right - l.pic.left) as u32).min(self.src_w).max(2), ((l.pic.bottom - l.pic.top) as u32).min(self.src_h).max(2));
         if vs != self.view_size {
@@ -811,6 +894,8 @@ impl VEditor {
                 if self.player.playing() {
                     self.playhead = self.player.shared.t.load(Ordering::Acquire);
                     self.canvas.set_time(self.playhead);
+                    let total = self.total();
+                    self.tv.follow(self.playhead as f32, total);
                 } else {
                     self.audio = None;
                 }
@@ -834,6 +919,11 @@ impl VEditor {
                         unsafe {
                             let _ = KillTimer(Some(self.hwnd), ANIM_TIMER);
                         }
+                    }
+                    self.invalidate();
+                } else if wp.0 == TIP_TIMER {
+                    unsafe {
+                        let _ = KillTimer(Some(self.hwnd), TIP_TIMER);
                     }
                     self.invalidate();
                 } else if wp.0 == STATUS_TIMER {
@@ -861,7 +951,55 @@ impl VEditor {
                 let hov = if self.in_bar(p) { self.strip.hit(p) } else { None };
                 let l = self.lay();
                 let (fx, fy) = (p.x as f32, p.y as f32);
-                let ctl = if inside(&l.play, fx, fy) { Some(1) } else if inside(&l.split, fx, fy) { Some(2) } else if inside(&l.delete, fx, fy) { Some(3) } else { None };
+                let ctl = if inside(&l.play, fx, fy) {
+                    Some(1)
+                } else if inside(&l.split, fx, fy) {
+                    Some(2)
+                } else if inside(&l.delete, fx, fy) {
+                    Some(3)
+                } else if inside(&l.zout, fx, fy) {
+                    Some(4)
+                } else if inside(&l.zin, fx, fy) {
+                    Some(5)
+                } else if inside(&l.zfit, fx, fy) {
+                    Some(6)
+                } else if inside(&l.scroll, fx, fy) {
+                    Some(7)
+                } else {
+                    None
+                };
+                if !self.tracking {
+                    let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: self.hwnd, dwHoverTime: 0 };
+                    unsafe {
+                        let _ = TrackMouseEvent(&mut t);
+                    }
+                    self.tracking = true;
+                }
+                // Hover line + frame preview over the timeline.
+                let over_tl = matches!(self.drag, Drag::None) && fx >= l.x0 && fx <= l.x1 && fy >= l.ruler.top && fy < l.items.bottom;
+                let ht = over_tl.then(|| self.t_of(&l, fx));
+                if ht != self.hover_t {
+                    self.hover_t = ht;
+                    self.invalidate();
+                }
+                let hc = if inside(&l.clips, fx, fy) || inside(&l.audio, fx, fy) { self.clip_at(&l, fx).map(|c| c.0) } else { None };
+                if hc != self.hover_clip {
+                    self.hover_clip = hc;
+                    self.invalidate();
+                }
+                let tip = self.tip_at(p);
+                if tip.as_ref().map(|t| t.id) != self.tip.as_ref().map(|t| t.id) {
+                    let was = self.tip.is_some() && self.tip_since.elapsed().as_millis() >= 480;
+                    self.tip = tip;
+                    // Moving between controls keeps tips showing right away.
+                    self.tip_since = if was && self.tip.is_some() { std::time::Instant::now() - std::time::Duration::from_millis(480) } else { std::time::Instant::now() };
+                    unsafe {
+                        SetTimer(Some(self.hwnd), TIP_TIMER, 500, None);
+                    }
+                    self.invalidate();
+                } else if self.tip.is_some() && self.tip_since.elapsed().as_millis() >= 480 {
+                    self.invalidate();
+                }
                 if ctl != self.hover_ctl {
                     self.hover_ctl = ctl;
                     self.invalidate();
@@ -877,6 +1015,17 @@ impl VEditor {
                 let l = self.lay();
                 match self.drag {
                     Drag::None => {}
+                    Drag::Zoom => {
+                        let k = (x - l.slider.left) / (l.slider.right - l.slider.left).max(1.0);
+                        self.set_zoom_frac(k);
+                    }
+                    Drag::Scroll { x0, start0 } => {
+                        let per_px = self.total() as f32 / (l.scroll.right - l.scroll.left).max(1.0);
+                        self.tv.start = start0 + (x - x0) * per_px;
+                        let total = self.total();
+                        self.tv.clamp(total);
+                        self.invalidate();
+                    }
                     Drag::Canvas => {
                         let q = self.to_src(&l, x, y);
                         let c = self.canvas.mouse_move(q, wp.0 & 0x0004 != 0);
@@ -926,6 +1075,40 @@ impl VEditor {
                 }
                 (Some(LRESULT(0)), None)
             }
+            WM_MOUSELEAVE => {
+                self.tracking = false;
+                self.hover_t = None;
+                self.hover_clip = None;
+                self.tip = None;
+                self.hover_ctl = None;
+                self.invalidate();
+                (Some(LRESULT(0)), None)
+            }
+            WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
+                let mut pt = POINT { x: (lp.0 & 0xFFFF) as i16 as i32, y: ((lp.0 >> 16) & 0xFFFF) as i16 as i32 };
+                unsafe {
+                    let _ = ScreenToClient(self.hwnd, &mut pt);
+                }
+                let l = self.lay();
+                let (x, y) = (pt.x as f32, pt.y as f32);
+                if y < l.sheet.top {
+                    return (None, None);
+                }
+                let delta = ((wp.0 >> 16) & 0xFFFF) as i16 as f32 / 120.0;
+                let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
+                let total = self.total();
+                if ctrl && msg == WM_MOUSEWHEEL {
+                    let t = self.t_of(&l, x);
+                    self.zoom_by(1.25f32.powf(delta), t);
+                } else {
+                    let sign = if msg == WM_MOUSEHWHEEL { 1.0 } else { -1.0 };
+                    self.tv.start += sign * delta * self.tv.visible(total) * 0.12;
+                    self.tv.clamp(total);
+                    self.invalidate();
+                }
+                self.hover_t = (x >= l.x0 && x <= l.x1 && y >= l.ruler.top && y < l.items.bottom).then(|| self.t_of(&l, x));
+                (Some(LRESULT(0)), None)
+            }
             WM_LBUTTONDOWN => {
                 let p = lparam_point(lp.0);
                 let (x, y) = (p.x as f32, p.y as f32);
@@ -939,8 +1122,40 @@ impl VEditor {
                     return (Some(LRESULT(0)), None);
                 }
                 let l = self.lay();
+                self.tip = None;
                 if inside(&l.play, x, y) {
                     self.toggle_play();
+                    return (Some(LRESULT(0)), None);
+                }
+                if inside(&l.zout, x, y) || inside(&l.zin, x, y) {
+                    let f = if inside(&l.zin, x, y) { 1.6 } else { 1.0 / 1.6 };
+                    let t = self.playhead;
+                    self.zoom_by(f, t);
+                    return (Some(LRESULT(0)), None);
+                }
+                if inside(&l.zfit, x, y) {
+                    self.tv = TimeView::default();
+                    self.invalidate();
+                    return (Some(LRESULT(0)), None);
+                }
+                if inside(&rect_f(l.slider.left - 8.0 * self.scale, l.slider.top, l.slider.right + 8.0 * self.scale, l.slider.bottom), x, y) {
+                    self.drag = Drag::Zoom;
+                    let k = (x - l.slider.left) / (l.slider.right - l.slider.left).max(1.0);
+                    self.set_zoom_frac(k);
+                    return (Some(LRESULT(0)), None);
+                }
+                if inside(&l.scroll, x, y) && self.tv.zoom > 1.001 {
+                    let total = self.total() as f32;
+                    let w = (l.scroll.right - l.scroll.left) / self.tv.zoom;
+                    let tx = l.scroll.left + (l.scroll.right - l.scroll.left) * (self.tv.start / total);
+                    if x < tx || x > tx + w {
+                        // Click beside the thumb: jump there.
+                        self.tv.start = (x - l.scroll.left) / (l.scroll.right - l.scroll.left) * total - self.tv.visible(self.total()) / 2.0;
+                        let t = self.total();
+                        self.tv.clamp(t);
+                    }
+                    self.drag = Drag::Scroll { x0: x, start0: self.tv.start };
+                    self.invalidate();
                     return (Some(LRESULT(0)), None);
                 }
                 if inside(&l.split, x, y) {
@@ -960,7 +1175,7 @@ impl VEditor {
                     self.seek(t);
                     return (Some(LRESULT(0)), None);
                 }
-                if inside(&l.clips, x, y) {
+                if inside(&l.clips, x, y) || inside(&l.audio, x, y) {
                     let _ = self.canvas.finish_text();
                     self.canvas.selected = None;
                     if let Some((i, edge)) = self.clip_at(&l, x) {
@@ -1150,9 +1365,9 @@ impl VEditor {
         let l = self.lay();
         let id = if self.in_bar(p) {
             if self.strip.hit(p).is_some() { IDC_HAND } else { IDC_ARROW }
-        } else if inside(&l.play, x, y) || inside(&l.split, x, y) || inside(&l.delete, x, y) {
+        } else if inside(&l.play, x, y) || inside(&l.split, x, y) || inside(&l.delete, x, y) || inside(&l.zout, x, y) || inside(&l.zin, x, y) || inside(&l.zfit, x, y) || inside(&l.slider, x, y) || (inside(&l.scroll, x, y) && self.tv.zoom > 1.001) {
             IDC_HAND
-        } else if inside(&l.clips, x, y) {
+        } else if inside(&l.clips, x, y) || inside(&l.audio, x, y) {
             match self.clip_at(&l, x) {
                 Some((_, Some(_))) => IDC_SIZEWE,
                 Some(_) => IDC_SIZEALL,
@@ -1184,17 +1399,30 @@ impl VEditor {
 
     // ---- drawing ----
 
-    fn scene_target(&mut self, rt: &ID2D1HwndRenderTarget) -> Option<ID2D1BitmapRenderTarget> {
-        let (w, h) = self.rt_size;
-        if let Some((sw, sh, t)) = &self.scene {
-            if (*sw, *sh) == (w, h) {
-                return Some(t.clone());
+    /// The cached D2D bitmap of the strip thumbnail nearest `src_ms`.
+    fn thumb_near(&mut self, rt: &ID2D1RenderTarget, thumbs: &[(u32, Arc<crate::image::Frame>)], src_ms: u32) -> Option<ID2D1Bitmap> {
+        if thumbs.is_empty() {
+            return None;
+        }
+        let j = match thumbs.binary_search_by_key(&src_ms, |(m, _)| *m) {
+            Ok(j) => j,
+            Err(0) => 0,
+            Err(j) if j >= thumbs.len() => thumbs.len() - 1,
+            Err(j) => {
+                if src_ms - thumbs[j - 1].0 < thumbs[j].0 - src_ms {
+                    j - 1
+                } else {
+                    j
+                }
+            }
+        };
+        let (ms, f) = &thumbs[j];
+        if !self.thumb_bmps.contains_key(ms) {
+            if let Ok(bm) = d2d::bitmap(rt, f.width() as u32, f.height() as u32, &f.pixels) {
+                self.thumb_bmps.insert(*ms, bm);
             }
         }
-        let t = unsafe { rt.CreateCompatibleRenderTarget(None, Some(&D2D_SIZE_U { width: w, height: h }), None, D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE).ok()? };
-        unsafe { t.SetDpi(96.0, 96.0) };
-        self.scene = Some((w, h, t.clone()));
-        Some(t)
+        self.thumb_bmps.get(ms).cloned()
     }
 
     fn render(&mut self, gfx: &Gfx) {
@@ -1209,44 +1437,53 @@ impl VEditor {
         }
         // New preview frame?
         let seq = self.player.shared.seq.load(Ordering::Acquire);
+        let mut frame_t = None;
         if self.frame_bmp.as_ref().map(|b| b.0) != Some(seq) {
-            let f = self.player.shared.frame.lock().ok().and_then(|g| g.as_ref().map(|(_, f)| f.clone()));
-            if let Some(f) = f {
+            let f = self.player.shared.frame.lock().ok().and_then(|g| g.as_ref().map(|(t, f)| (*t, f.clone())));
+            if let Some((_, f)) = f {
                 if let Ok(b) = d2d::bitmap(rt1, f.width() as u32, f.height() as u32, &f.pixels) {
                     self.frame_bmp = Some((seq, b));
                 }
             }
         }
+        if let Ok(g) = self.player.shared.frame.lock() {
+            frame_t = g.as_ref().map(|(t, _)| *t);
+        }
         let l = self.lay();
-        let scene = self.scene_target(&rt);
+        // While scrubbing the exact frame lags behind: show the nearest strip
+        // frame at once (same picture when the camera shows the whole frame).
+        let frame_ms = (1000 * self.fps.1 / self.fps.0.max(1)).max(1);
+        let stale = !self.player.playing() && frame_t.is_some_and(|t| t.abs_diff(self.playhead) > frame_ms * 2);
+        let quick = if stale && self.cam().is_full(self.src_w as f32, self.src_h as f32) {
+            let thumbs: Vec<(u32, Arc<crate::image::Frame>)> = self.strips.thumbs.lock().map(|g| g.clone()).unwrap_or_default();
+            let (_, src_ms) = self.timeline.locate(self.playhead);
+            self.thumb_near(rt1, &thumbs, src_ms)
+        } else {
+            None
+        };
         unsafe {
-            let target: &ID2D1RenderTarget = match &scene {
-                Some(t) => t,
-                None => rt1,
-            };
-            target.BeginDraw();
-            target.Clear(Some(&theme::color(p.canvas)));
-            if let Some((_, b)) = &self.frame_bmp {
-                theme::shadow(target, l.pic, 2.0 * s, s, 0.8);
-                target.DrawBitmap(b, Some(&l.pic), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+            rt.BeginDraw();
+            rt.Clear(Some(&theme::color(p.canvas)));
+            theme::shadow(rt1, l.pic, 2.0 * s, s, 0.8);
+            match (&quick, &self.frame_bmp) {
+                (Some(b), _) => rt.DrawBitmap(b, Some(&l.pic), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None),
+                (None, Some((_, b))) => rt.DrawBitmap(b, Some(&l.pic), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None),
+                _ => {}
             }
-            self.draw_marks_ui(target, &l);
-            let mut blurred = None;
-            if let Some(t) = &scene {
-                let _ = t.EndDraw(None, None);
-                rt.BeginDraw();
-                if let Ok(b) = t.GetBitmap() {
-                    rt.DrawBitmap(&b, None, 1.0, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None);
-                    blurred = self.blur.image(rt1, &b, 22.0 * s);
-                }
-            }
-            let back = blurred.as_ref().map(|image| Backdrop { image, origin: (0.0, 0.0), zoom: 1.0 });
-            theme::glass(rt1, gfx, l.sheet, 18.0 * s, s, back.as_ref());
+            self.draw_marks_ui(rt1, &l);
+            // The picture never sits under the glass, so there is nothing to
+            // blur: no offscreen scene, no blur pass per video frame.
+            theme::glass(rt1, gfx, l.sheet, 18.0 * s, s, None);
             let st = self.state();
-            self.strip.draw(rt1, gfx, &st, (0.0, 0.0), Some(back.as_ref()));
+            self.strip.draw(rt1, gfx, &st, (0.0, 0.0), Some(None));
             self.draw_panel(rt1, gfx, &l);
+            self.draw_hover_preview(rt1, gfx, &l);
+            self.draw_toast(rt1, gfx, &l);
+            self.draw_tip(rt1, gfx);
             let _ = rt.EndDraw(None, None);
         }
+        // Test hook: the visible time range (start ms, zoom x100).
+        super::uimap::put("veditor.view", Rect::new(self.tv.start as i32, (self.tv.zoom * 100.0) as i32, 0, 0));
     }
 
     /// Fills `r` with rounded corners and runs `f` clipped to that shape.
@@ -1293,8 +1530,10 @@ impl VEditor {
         ) else {
             return;
         };
+        let Ok(trim) = d2d::brush(rt, rgba(TRIM, 1.0)) else { return };
+        let total = self.total();
         unsafe {
-            // Transport: round accent play button, time, Split and Delete capsules.
+            // ---- Transport: play, time, zoom, Split, Delete ----
             let playing = self.player.playing();
             let pr = if self.hover_ctl == Some(1) { l.play } else { theme::inset(l.play, 0.5 * s) };
             let e = D2D1_ELLIPSE {
@@ -1306,12 +1545,27 @@ impl VEditor {
             let glyph_r = if playing { l.play } else { rect_f(l.play.left + 1.5 * s, l.play.top, l.play.right + 1.5 * s, l.play.bottom) };
             d2d::draw_text(rt, &icon, if playing { "\u{E769}" } else { "\u{E768}" }, glyph_r, &on_acc);
             let now = vedit::clock(self.playhead);
-            let total = format!("  /  {}", vedit::clock(self.timeline.total()));
+            let tot = format!("  /  {}", vedit::clock(total));
             let tx = l.play.right + 14.0 * s;
             let ty = l.play.top + 7.0 * s;
             d2d::draw_text(rt, &label, &now, rect_f(tx, ty, tx + 120.0 * s, l.play.bottom), &fg);
             let nw = gfx.measure(&label, &now);
-            d2d::draw_text(rt, &label, &total, rect_f(tx + nw, ty, tx + nw + 140.0 * s, l.play.bottom), &fg2);
+            d2d::draw_text(rt, &label, &tot, rect_f(tx + nw, ty, tx + nw + 140.0 * s, l.play.bottom), &fg2);
+            // Zoom controls.
+            for (k, r, glyph) in [(4u8, l.zout, "\u{E71F}"), (5, l.zin, "\u{E8A3}"), (6, l.zfit, "\u{E9A6}")] {
+                if self.hover_ctl == Some(k) {
+                    rt.FillRoundedRectangle(&theme::round(r, (r.bottom - r.top) / 2.0), &btn_hover);
+                }
+                d2d::draw_text(rt, &icon, glyph, rect_f(r.left + (r.right - r.left - 14.0 * s) / 2.0, r.top + (r.bottom - r.top - 18.0 * s) / 2.0, r.right, r.bottom), &fg2);
+            }
+            let sy = (l.slider.top + l.slider.bottom) / 2.0;
+            rt.FillRoundedRectangle(&theme::round(rect_f(l.slider.left, sy - 2.0 * s, l.slider.right, sy + 2.0 * s), 2.0 * s), &track);
+            let kx = l.slider.left + (l.slider.right - l.slider.left) * self.zoom_frac();
+            rt.FillRoundedRectangle(&theme::round(rect_f(l.slider.left, sy - 2.0 * s, kx, sy + 2.0 * s), 2.0 * s), &acc);
+            if let (Ok(w), Ok(sh)) = (d2d::brush(rt, rgba(0xFFFFFF, 1.0)), d2d::brush(rt, rgba(0x000000, 0.28))) {
+                rt.FillEllipse(&D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: kx, Y: sy + 0.8 * s }, radiusX: 8.0 * s, radiusY: 8.0 * s }, &sh);
+                rt.FillEllipse(&D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: kx, Y: sy }, radiusX: 7.5 * s, radiusY: 7.5 * s }, &w);
+            }
             for (r, glyph, text, key) in [(l.split, "\u{E8C6}", "Split", "S"), (l.delete, "\u{E74D}", "Delete", "")] {
                 let k = if r.left == l.split.left { 2 } else { 3 };
                 let rr = theme::round(r, (r.bottom - r.top) / 2.0);
@@ -1330,101 +1584,108 @@ impl VEditor {
                     d2d::draw_text(rt, &small, key, rect_f(kr.left + 4.0 * s, kr.top + 1.0 * s, kr.right, kr.bottom), &fg2);
                 }
             }
-            if !self.status.is_empty() {
-                let w = gfx.measure(&label, &self.status);
-                let x = l.split.left - 18.0 * s - w;
-                d2d::draw_text(rt, &label, &self.status, rect_f(x, l.play.top + 7.0 * s, l.split.left - 8.0 * s, l.play.bottom), &acc);
+
+            // ---- Track names ----
+            for (r, glyph, name) in [(l.clips, "\u{E714}", "Video"), (l.audio, "\u{E767}", "Audio"), (l.items, "\u{E70F}", "Marks")] {
+                let cy = (r.top + r.bottom) / 2.0;
+                d2d::draw_text(rt, &icon, glyph, rect_f(l.head.left, cy - 9.0 * s, l.head.left + 20.0 * s, cy + 10.0 * s), &fg2);
+                d2d::draw_text(rt, &small, name, rect_f(l.head.left + 22.0 * s, cy - 7.5 * s, l.head.right, cy + 9.0 * s), &fg2);
             }
 
-            // Ruler.
-            let total = self.timeline.total().max(1);
-            let px_s = (l.x1 - l.x0) / (total as f32 / 1000.0);
-            let step_s = [1u32, 2, 5, 10, 15, 30, 60, 120, 300, 600].into_iter().find(|st| *st as f32 * px_s >= 60.0 * s).unwrap_or(600);
-            let mut sec = 0u32;
-            while sec * 1000 <= total {
-                let x = self.x_of(l, sec * 1000);
-                rt.FillRectangle(&rect_f(x, l.ruler.bottom - 5.0 * s, x + 1.0, l.ruler.bottom), &dim);
-                d2d::draw_text(rt, &small, &format!("{}:{:02}", sec / 60, sec % 60), rect_f(x + 3.0 * s, l.ruler.top, x + 60.0 * s, l.ruler.bottom), &fg2);
-                sec += step_s;
+            // Everything on the timeline is clipped to it (it scrolls).
+            let tl = rect_f(l.x0 - 2.0 * s, l.ruler.top, l.x1 + 2.0 * s, l.items.bottom);
+            rt.PushAxisAlignedClip(&tl, D2D1_ANTIALIAS_MODE_ALIASED);
+
+            // ---- Ruler: labelled ticks and small ones between ----
+            let mspp = self.ms_per_px(l);
+            let (major, minor) = vedit::ruler_steps(mspp, 70.0 * s);
+            let t0 = self.tv.start.max(0.0) as u32;
+            let t1 = (self.tv.start + self.tv.visible(total)).min(total as f32) as u32;
+            let mut t = t0 / minor * minor;
+            while t <= t1 {
+                let x = self.x_of(l, t);
+                if t % major == 0 {
+                    rt.FillRectangle(&rect_f(x, l.ruler.bottom - 7.0 * s, x + 1.0, l.ruler.bottom), &fg2);
+                    d2d::draw_text(rt, &small, &vedit::ruler_label(t, major), rect_f(x + 3.0 * s, l.ruler.top + 1.0 * s, x + 80.0 * s, l.ruler.bottom), &fg2);
+                } else {
+                    rt.FillRectangle(&rect_f(x, l.ruler.bottom - 3.0 * s, x + 1.0, l.ruler.bottom), &dim);
+                }
+                t += minor;
             }
 
-            // Clips: thumbnails, waveform, rounded borders.
+            // ---- Video clips: filmstrip, duration, trim handles ----
             let thumbs: Vec<(u32, Arc<crate::image::Frame>)> = self.strips.thumbs.lock().map(|g| g.clone()).unwrap_or_default();
             let peaks: Vec<u8> = self.strips.peaks.lock().map(|g| g.clone()).unwrap_or_default();
-            let track_h = l.clips.bottom - l.clips.top;
-            let wave_h = 16.0 * s;
-            let th = track_h - wave_h;
+            let th = l.clips.bottom - l.clips.top;
             let tw = if let Some((_, f)) = thumbs.first() { th * f.width() as f32 / f.height().max(1) as f32 } else { th * 16.0 / 9.0 };
             let moving = match &self.drag {
                 Drag::Clip { idx, moved: true, target, .. } => Some((*idx, *target)),
                 _ => None,
             };
-            let radius = 8.0 * s;
-            let wave = theme::brush(rt, theme::with_alpha(p.teal, 0.9));
-            for (i, c) in self.timeline.clips.clone().iter().enumerate() {
+            let radius = 7.0 * s;
+            let wave = theme::brush(rt, theme::with_alpha(p.teal, 0.95));
+            let clips = self.timeline.clips.clone();
+            for (i, c) in clips.iter().enumerate() {
                 let (a, b) = (self.x_of(l, self.timeline.start_of(i)), self.x_of(l, self.timeline.start_of(i) + c.len()));
+                if b < l.x0 - 20.0 || a > l.x1 + 20.0 {
+                    continue;
+                }
                 let r = rect_f(a + 1.5, l.clips.top, (b - 1.5).max(a + 3.0), l.clips.bottom);
                 rt.FillRoundedRectangle(&theme::round(r, radius), &track);
                 let mut bmps: Vec<(D2D_RECT_F, ID2D1Bitmap)> = Vec::new();
-                if !thumbs.is_empty() {
-                    let mut x = r.left;
-                    while x < r.right {
-                        let k = ((x + tw / 2.0 - a) / (b - a).max(1.0)).clamp(0.0, 1.0);
-                        let src_ms = c.a + (k * c.len() as f32) as u32;
-                        let j = match thumbs.binary_search_by_key(&src_ms, |(m, _)| *m) {
-                            Ok(j) => j,
-                            Err(j) => {
-                                if j == 0 {
-                                    0
-                                } else if j >= thumbs.len() {
-                                    thumbs.len() - 1
-                                } else if src_ms - thumbs[j - 1].0 < thumbs[j].0 - src_ms {
-                                    j - 1
-                                } else {
-                                    j
-                                }
-                            }
-                        };
-                        let (ms, f) = &thumbs[j];
-                        if !self.thumb_bmps.contains_key(ms) {
-                            if let Ok(bm) = d2d::bitmap(rt, f.width() as u32, f.height() as u32, &f.pixels) {
-                                self.thumb_bmps.insert(*ms, bm);
-                            }
-                        }
-                        if let Some(bm) = self.thumb_bmps.get(ms) {
-                            bmps.push((rect_f(x, r.top, x + tw, r.top + th), bm.clone()));
-                        }
-                        x += tw;
+                // Thumbnails on a fixed grid in time, so they don't swim when scrolling.
+                let ms_per_thumb = (tw * mspp).max(1.0);
+                let first = ((self.tv.start - self.timeline.start_of(i) as f32) / ms_per_thumb).floor().max(0.0) as u32;
+                let mut k = first;
+                loop {
+                    let local = k as f32 * ms_per_thumb;
+                    if local >= c.len() as f32 {
+                        break;
                     }
-                }
-                let mut bars: Vec<D2D_RECT_F> = Vec::new();
-                if !peaks.is_empty() {
-                    let mid = r.bottom - wave_h / 2.0;
-                    let mut x = r.left + 2.0 * s;
-                    while x < r.right - 2.0 * s {
-                        let k0 = ((x - a) / (b - a).max(1.0)).clamp(0.0, 1.0);
-                        let k1 = ((x + 2.0 - a) / (b - a).max(1.0)).clamp(0.0, 1.0);
-                        let (m0, m1) = (c.a + (k0 * c.len() as f32) as u32, c.a + (k1 * c.len() as f32) as u32);
-                        let (p0, p1) = ((m0 / PEAK_MS) as usize, ((m1 / PEAK_MS) as usize).max(m0 as usize / PEAK_MS as usize + 1));
-                        let v = peaks.get(p0..p1.min(peaks.len())).and_then(|sl| sl.iter().max().copied()).unwrap_or(0);
-                        let hh = (v as f32 / 255.0) * (wave_h / 2.0 - 2.0);
-                        bars.push(rect_f(x, mid - hh.max(0.5), x + 1.4 * s, mid + hh.max(0.5)));
-                        x += 2.5 * s;
+                    let x = a + local / mspp;
+                    if x > l.x1 + tw {
+                        break;
                     }
+                    let src_ms = c.a + (local + ms_per_thumb / 2.0).min(c.len() as f32 - 1.0) as u32;
+                    if let Some(bm) = self.thumb_near(rt, &thumbs, src_ms) {
+                        bmps.push((rect_f(x, r.top, x + tw, r.bottom), bm));
+                    }
+                    k += 1;
                 }
                 self.clipped(rt, r, radius, || {
                     for (d, bm) in &bmps {
                         rt.DrawBitmap(bm, Some(d), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
                     }
-                    if let Some(wb) = &wave {
-                        for q in &bars {
-                            rt.FillRoundedRectangle(&theme::round(*q, 0.7 * s), wb);
+                });
+                // Duration pill.
+                let dur = format!("{:.1}s", c.len() as f32 / 1000.0);
+                let dw = gfx.measure(&small, &dur) + 10.0 * s;
+                if r.right - r.left > dw + 16.0 * s {
+                    let dr = rect_f(r.left.max(l.x0) + 5.0 * s, r.bottom - 19.0 * s, r.left.max(l.x0) + 5.0 * s + dw, r.bottom - 5.0 * s);
+                    if let (Ok(bg), Ok(wt)) = (d2d::brush(rt, rgba(0x000000, 0.55)), d2d::brush(rt, rgba(0xFFFFFF, 0.95))) {
+                        rt.FillRoundedRectangle(&theme::round(dr, 7.0 * s), &bg);
+                        d2d::draw_text(rt, &small, &dur, rect_f(dr.left + 5.0 * s, dr.top, dr.right, dr.bottom), &wt);
+                    }
+                }
+                let sel = self.sel_clip == Some(i);
+                let hot = self.hover_clip == Some(i) || matches!(self.drag, Drag::Trim { idx, .. } if idx == i);
+                if sel || hot {
+                    // Final Cut style: a yellow frame with grips on both edges.
+                    let w = if sel { 2.5 * s } else { 1.5 * s };
+                    let col = if sel { &trim } else { &fg2 };
+                    rt.DrawRoundedRectangle(&theme::round(theme::inset(r, w / 2.0), radius), col, w, None);
+                    let hw = 9.0 * s;
+                    for (hx, left) in [(r.left, true), (r.right - hw, false)] {
+                        let hr = rect_f(hx, r.top, hx + hw, r.bottom);
+                        let (rl, rr) = if left { (radius, 2.0 * s) } else { (2.0 * s, radius) };
+                        let _ = (rl, rr);
+                        rt.FillRoundedRectangle(&theme::round(hr, 3.0 * s), col);
+                        if let Ok(g) = d2d::brush(rt, rgba(0x000000, 0.45)) {
+                            let gx = hx + hw / 2.0;
+                            let cy = (r.top + r.bottom) / 2.0;
+                            rt.FillRoundedRectangle(&theme::round(rect_f(gx - 0.8 * s, cy - 8.0 * s, gx + 0.8 * s, cy + 8.0 * s), 0.8 * s), &g);
                         }
                     }
-                });
-                let sel = self.sel_clip == Some(i);
-                if sel {
-                    rt.DrawRoundedRectangle(&theme::round(theme::inset(r, 1.0 * s), radius - 1.0 * s), &acc, 2.0 * s, None);
                 } else if let Some(h) = theme::brush(rt, p.hairline) {
                     rt.DrawRoundedRectangle(&theme::round(theme::inset(r, 0.5), radius), &h, 1.0, None);
                 }
@@ -1433,24 +1694,53 @@ impl VEditor {
                         rt.FillRoundedRectangle(&theme::round(r, radius), &veil);
                     }
                 }
+
+                // ---- Audio under the clip: mirrored waveform ----
+                let ar = rect_f(r.left, l.audio.top, r.right, l.audio.bottom);
+                rt.FillRoundedRectangle(&theme::round(ar, 6.0 * s), &btn);
+                if !peaks.is_empty() {
+                    let mid = (ar.top + ar.bottom) / 2.0;
+                    let half = (ar.bottom - ar.top) / 2.0 - 3.0 * s;
+                    let step = 3.0 * s;
+                    let mut bars: Vec<D2D_RECT_F> = Vec::new();
+                    let mut x = ar.left.max(l.x0 - step) + 2.0 * s;
+                    while x < ar.right.min(l.x1 + step) - 2.0 * s {
+                        let m0 = c.a as f32 + (x - a) * mspp;
+                        let m1 = m0 + step * mspp;
+                        let (p0, p1) = ((m0.max(0.0) as u32 / PEAK_MS) as usize, ((m1.max(0.0) as u32 / PEAK_MS) as usize).max(m0.max(0.0) as usize / PEAK_MS as usize + 1));
+                        let v = peaks.get(p0..p1.min(peaks.len())).and_then(|sl| sl.iter().max().copied()).unwrap_or(0);
+                        let hh = (v as f32 / 255.0).sqrt() * half;
+                        bars.push(rect_f(x, mid - hh.max(0.6), x + 1.8 * s, mid + hh.max(0.6)));
+                        x += step;
+                    }
+                    if let Some(wb) = &wave {
+                        self.clipped(rt, ar, 6.0 * s, || {
+                            for q in &bars {
+                                rt.FillRoundedRectangle(&theme::round(*q, 0.9 * s), wb);
+                            }
+                        });
+                    }
+                } else if self.strips.done.load(Ordering::Acquire) && i == 0 {
+                    d2d::draw_text(rt, &small, "No sound in this video", rect_f(ar.left.max(l.x0) + 10.0 * s, ar.top + 7.0 * s, ar.right, ar.bottom), &fg2);
+                }
             }
             if let Some((idx, target)) = moving {
                 // Where the clip will land.
                 let others: Vec<usize> = (0..self.timeline.clips.len()).filter(|&k| k != idx).collect();
                 let x = if target == 0 {
-                    l.x0
+                    self.x_of(l, 0)
                 } else {
                     let k = others[(target - 1).min(others.len() - 1)];
                     self.x_of(l, self.timeline.start_of(k) + self.timeline.clips[k].len())
                 };
-                rt.FillRoundedRectangle(&theme::round(rect_f(x - 1.5 * s, l.clips.top - 4.0 * s, x + 1.5 * s, l.clips.bottom + 4.0 * s), 1.5 * s), &acc);
+                rt.FillRoundedRectangle(&theme::round(rect_f(x - 1.5 * s, l.clips.top - 4.0 * s, x + 1.5 * s, l.audio.bottom + 4.0 * s), 1.5 * s), &acc);
             }
 
-            // Annotation track: capsules.
-            rt.FillRoundedRectangle(&theme::round(l.items, radius), &btn);
+            // ---- Marks: a bar per annotation, with its icon ----
+            rt.FillRoundedRectangle(&theme::round(rect_f(l.x0, l.items.top, l.x1, l.items.bottom), radius), &btn);
             let lanes = self.lanes();
             if lanes.is_empty() {
-                d2d::draw_text(rt, &small, "Text, marks and zooms show up here. Draw on the video to add one.", rect_f(l.items.left + 12.0 * s, l.items.top + 13.0 * s, l.items.right, l.items.bottom), &fg2);
+                d2d::draw_text(rt, &small, "Draw on the video (arrows, text, blur, zoom) and each mark shows up here as a bar you can move and stretch in time.", rect_f(l.x0 + 12.0 * s, l.items.top + 14.0 * s, l.x1, l.items.bottom), &fg2);
             }
             let n = lanes.iter().map(|(_, ln)| ln + 1).max().unwrap_or(1).max(1);
             let lh = (l.items.bottom - l.items.top) / n as f32;
@@ -1459,19 +1749,8 @@ impl VEditor {
                 let Some((a, b)) = it.span else { continue };
                 let (x0, x1) = (self.x_of(l, a), self.x_of(l, b.min(total)).max(self.x_of(l, a) + 4.0));
                 let r = rect_f(x0, l.items.top + lh * lane as f32 + 3.0 * s, x1, l.items.top + lh * (lane + 1) as f32 - 3.0 * s);
-                let (col, name) = match &it.shape {
-                    Shape::Zoom { .. } => (p.purple.0, "Zoom".to_string()),
-                    Shape::Text { text, .. } => (it.color.hex(), format!("T  {}", text.lines().next().unwrap_or(""))),
-                    Shape::Step { .. } => (it.color.hex(), "Step".into()),
-                    Shape::Arrow { .. } => (it.color.hex(), "Arrow".into()),
-                    Shape::Blur { .. } => (0x8E8E93, "Blur".into()),
-                    Shape::Rect { .. } => (it.color.hex(), "Rectangle".into()),
-                    Shape::Ellipse { .. } => (it.color.hex(), "Ellipse".into()),
-                    Shape::Line { .. } => (it.color.hex(), "Line".into()),
-                    Shape::Pen { .. } => (it.color.hex(), "Pen".into()),
-                    Shape::Highlighter { .. } => (it.color.hex(), "Marker".into()),
-                };
-                let cr = (r.bottom - r.top) / 2.0;
+                let (col, glyph, name) = mark_look(it, &p);
+                let cr = ((r.bottom - r.top) / 2.0).min(8.0 * s);
                 if let Ok(bb) = d2d::brush(rt, rgba(col, 0.92)) {
                     rt.FillRoundedRectangle(&theme::round(r, cr), &bb);
                 }
@@ -1480,22 +1759,255 @@ impl VEditor {
                 }
                 let ink = if Color::from_hex(col).luma() > 0.6 { 0x111111 } else { 0xFFFFFF };
                 if let Ok(tb) = d2d::brush(rt, rgba(ink, 0.95)) {
-                    d2d::draw_text(rt, &small, &name, rect_f(r.left + 9.0 * s, r.top + ((r.bottom - r.top) - 14.0 * s) / 2.0, r.right - 4.0, r.bottom), &tb);
+                    let cy = (r.top + r.bottom) / 2.0;
+                    let tx = r.left.max(l.x0) + 8.0 * s;
+                    if r.right - tx > 18.0 * s {
+                        d2d::draw_text(rt, &icon, glyph, rect_f(tx, cy - 9.0 * s, tx + 18.0 * s, cy + 10.0 * s), &tb);
+                    }
+                    if r.right - tx > 44.0 * s {
+                        d2d::draw_text(rt, &small, &name, rect_f(tx + 20.0 * s, cy - 7.5 * s, r.right - 6.0 * s, cy + 9.0 * s), &tb);
+                    }
+                    // Edge grips once it is wide enough to grab them.
+                    if r.right - r.left > 30.0 * s {
+                        if let Ok(g) = d2d::brush(rt, rgba(ink, 0.45)) {
+                            for gx in [r.left + 3.5 * s, r.right - 4.5 * s] {
+                                rt.FillRoundedRectangle(&theme::round(rect_f(gx, cy - 5.0 * s, gx + 1.2 * s, cy + 5.0 * s), 0.6 * s), &g);
+                            }
+                        }
+                    }
                 }
             }
 
-            // Playhead with a round knob.
-            let x = self.x_of(l, self.playhead);
-            rt.FillRoundedRectangle(&theme::round(rect_f(x - 1.0 * s, l.ruler.top + 6.0 * s, x + 1.0 * s, l.items.bottom), 1.0 * s), &acc);
-            let knob = D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: x, Y: l.ruler.top + 6.0 * s }, radiusX: 6.0 * s, radiusY: 6.0 * s };
-            if let Ok(sh) = d2d::brush(rt, rgba(0x000000, 0.25)) {
-                rt.FillEllipse(&D2D1_ELLIPSE { point: windows_numerics::Vector2 { X: x, Y: l.ruler.top + 7.0 * s }, radiusX: 7.0 * s, radiusY: 7.0 * s }, &sh);
+            // ---- Hover line ----
+            if let (Some(ht), Drag::None) = (self.hover_t, &self.drag) {
+                let x = self.x_of(l, ht);
+                if let Some(hb) = theme::brush(rt, theme::with_alpha(p.label, 0.45)) {
+                    rt.FillRectangle(&rect_f(x - 0.5, l.ruler.top, x + 0.5, l.items.bottom), &hb);
+                }
             }
-            rt.FillEllipse(&knob, &acc);
-            if let Ok(w) = d2d::brush(rt, rgba(0xFFFFFF, 1.0)) {
-                rt.FillEllipse(&D2D1_ELLIPSE { radiusX: 2.0 * s, radiusY: 2.0 * s, ..knob }, &w);
+
+            // ---- Playhead: a line through every track and a time bubble ----
+            let x = self.x_of(l, self.playhead);
+            rt.FillRoundedRectangle(&theme::round(rect_f(x - 1.0 * s, l.ruler.top + 4.0 * s, x + 1.0 * s, l.items.bottom), 1.0 * s), &acc);
+            rt.PopAxisAlignedClip();
+            if x >= l.x0 - 1.0 && x <= l.x1 + 1.0 {
+                let tt = vedit::clock_fine(self.playhead);
+                let bw = gfx.measure(&small, &tt) + 14.0 * s;
+                let bx = (x - bw / 2.0).clamp(l.x0 - 30.0 * s, l.x1 - bw + 30.0 * s);
+                let br = rect_f(bx, l.ruler.top - 2.0 * s, bx + bw, l.ruler.top + 15.0 * s);
+                if let Ok(sh) = d2d::brush(rt, rgba(0x000000, 0.2)) {
+                    rt.FillRoundedRectangle(&theme::round(rect_f(br.left, br.top + 1.0 * s, br.right, br.bottom + 1.0 * s), 8.5 * s), &sh);
+                }
+                rt.FillRoundedRectangle(&theme::round(br, 8.5 * s), &acc);
+                d2d::draw_text(rt, &small, &tt, rect_f(br.left + 7.0 * s, br.top + 1.0 * s, br.right, br.bottom), &on_acc);
+            }
+
+            // ---- Scrollbar when zoomed in ----
+            if self.tv.zoom > 1.001 {
+                let sr = l.scroll;
+                rt.FillRoundedRectangle(&theme::round(sr, 3.0 * s), &btn);
+                let w = (sr.right - sr.left) / self.tv.zoom;
+                let tx = sr.left + (sr.right - sr.left) * (self.tv.start / total as f32);
+                let hot = matches!(self.drag, Drag::Scroll { .. }) || self.hover_ctl == Some(7);
+                rt.FillRoundedRectangle(&theme::round(rect_f(tx, sr.top, (tx + w).max(tx + 16.0 * s), sr.bottom), 3.0 * s), if hot { &fg2 } else { &dim });
             }
         }
+    }
+
+    /// The frame under the cursor, in a card above the timeline.
+    unsafe fn draw_hover_preview(&mut self, rt: &ID2D1RenderTarget, gfx: &Gfx, l: &Lay) {
+        let (Some(ht), Drag::None) = (self.hover_t, &self.drag) else {
+            super::uimap::remove("veditor.hoverpreview");
+            return;
+        };
+        let s = self.scale;
+        let p = theme::pal();
+        let Some((_, small, _, _)) = self.fonts_ui.clone() else { return };
+        let thumbs: Vec<(u32, Arc<crate::image::Frame>)> = self.strips.thumbs.lock().map(|g| g.clone()).unwrap_or_default();
+        let (_, src_ms) = self.timeline.locate(ht);
+        let Some(bm) = self.thumb_near(rt, &thumbs, src_ms) else { return };
+        let w = 176.0 * s;
+        let h = w * self.src_h as f32 / self.src_w.max(1) as f32;
+        let x = self.x_of(l, ht);
+        let cx = (x - w / 2.0 - 6.0 * s).clamp(l.sheet.left, l.sheet.right - w - 12.0 * s);
+        let card = rect_f(cx, l.sheet.top - h - 36.0 * s, cx + w + 12.0 * s, l.sheet.top - 6.0 * s);
+        unsafe {
+            theme::glass(rt, gfx, card, 12.0 * s, s, None);
+            let pic = rect_f(card.left + 6.0 * s, card.top + 6.0 * s, card.right - 6.0 * s, card.top + 6.0 * s + h);
+            self.clipped(rt, pic, 7.0 * s, || {
+                rt.DrawBitmap(&bm, Some(&pic), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+            });
+            if let Some(fg) = theme::brush(rt, p.label) {
+                let tt = vedit::clock_fine(ht);
+                let tw = gfx.measure(&small, &tt);
+                d2d::draw_text(rt, &small, &tt, rect_f((card.left + card.right - tw) / 2.0, pic.bottom + 5.0 * s, card.right, card.bottom), &fg);
+            }
+        }
+        let mut o = POINT::default();
+        unsafe {
+            let _ = ClientToScreen(self.hwnd, &mut o);
+        }
+        super::uimap::put("veditor.hoverpreview", Rect::new(card.left as i32 + o.x, card.top as i32 + o.y, card.right as i32 + o.x, card.bottom as i32 + o.y));
+    }
+
+    /// Status ("Split", "Saved ...", export progress) as a pill above the timeline.
+    unsafe fn draw_toast(&self, rt: &ID2D1RenderTarget, gfx: &Gfx, l: &Lay) {
+        if self.status.is_empty() {
+            return;
+        }
+        let s = self.scale;
+        let p = theme::pal();
+        let Some((_, _, label, _)) = self.fonts_ui.clone() else { return };
+        let w = gfx.measure(&label, &self.status) + 32.0 * s;
+        let cx = (l.sheet.left + l.sheet.right) / 2.0;
+        let h = 32.0 * s;
+        let r = rect_f(cx - w / 2.0, l.sheet.top - h - 10.0 * s, cx + w / 2.0, l.sheet.top - 10.0 * s);
+        unsafe {
+            theme::glass(rt, gfx, r, h / 2.0, s, None);
+            if let Some(w) = &self.work {
+                let k = w.prog.permille.load(Ordering::Acquire) as f32 / 1000.0;
+                if let Some(a) = theme::brush(rt, theme::with_alpha(p.accent, 0.22)) {
+                    rt.FillRoundedRectangle(&theme::round(rect_f(r.left, r.top, r.left + (r.right - r.left) * k, r.bottom), h / 2.0), &a);
+                }
+            }
+            if let Some(fg) = theme::brush(rt, p.label) {
+                d2d::draw_text(rt, &label, &self.status, rect_f(r.left + 16.0 * s, r.top + 7.0 * s, r.right, r.bottom), &fg);
+            }
+        }
+    }
+
+    /// The tooltip, once the cursor has rested on something for a moment.
+    unsafe fn draw_tip(&self, rt: &ID2D1RenderTarget, gfx: &Gfx) {
+        let Some(tip) = &self.tip else {
+            super::uimap::remove("veditor.tooltip");
+            return;
+        };
+        if self.tip_since.elapsed().as_millis() < 480 || !matches!(self.drag, Drag::None) {
+            super::uimap::remove("veditor.tooltip");
+            return;
+        }
+        let s = self.scale;
+        let p = theme::pal();
+        let Some((_, small, label, _)) = self.fonts_ui.clone() else { return };
+        let (cw, ch) = self.client();
+        let tw = gfx.measure(&label, &tip.text);
+        let kw = if tip.key.is_empty() { 0.0 } else { gfx.measure(&small, tip.key) + 18.0 * s };
+        let w = tw + kw + 24.0 * s;
+        let h = 30.0 * s;
+        let c = self.last_cursor;
+        let mut x = c.x as f32 + 12.0 * s;
+        let mut y = c.y as f32 + 22.0 * s;
+        if x + w > cw - 6.0 * s {
+            x = cw - 6.0 * s - w;
+        }
+        if y + h > ch - 6.0 * s {
+            y = c.y as f32 - h - 10.0 * s;
+        }
+        let r = rect_f(x, y, x + w, y + h);
+        unsafe {
+            theme::glass(rt, gfx, r, 9.0 * s, s, None);
+            if let (Some(fg), Some(fg2), Some(dim)) = (theme::brush(rt, p.label), theme::brush(rt, p.label2), theme::brush(rt, p.label3)) {
+                d2d::draw_text(rt, &label, &tip.text, rect_f(r.left + 12.0 * s, r.top + 6.0 * s, r.right, r.bottom), &fg);
+                if !tip.key.is_empty() {
+                    let kx = r.left + 12.0 * s + tw + 8.0 * s;
+                    let kr = rect_f(kx, r.top + 7.0 * s, kx + gfx.measure(&small, tip.key) + 10.0 * s, r.bottom - 7.0 * s);
+                    rt.DrawRoundedRectangle(&theme::round(kr, 4.0 * s), &dim, 1.0, None);
+                    d2d::draw_text(rt, &small, tip.key, rect_f(kr.left + 5.0 * s, kr.top + 1.0 * s, kr.right, kr.bottom), &fg2);
+                }
+            }
+        }
+        let mut o = POINT::default();
+        unsafe {
+            let _ = ClientToScreen(self.hwnd, &mut o);
+        }
+        super::uimap::put("veditor.tooltip", Rect::new(r.left as i32 + o.x, r.top as i32 + o.y, r.right as i32 + o.x, r.bottom as i32 + o.y));
+    }
+
+    /// What the cursor is on, for the tooltip.
+    fn tip_at(&self, p: Point) -> Option<Tip> {
+        let l = self.lay();
+        let (x, y) = (p.x as f32, p.y as f32);
+        let t = |id: u32, text: &str, key: &'static str| Some(Tip { id, text: text.into(), key });
+        if self.in_bar(p) {
+            let b = self.strip.hit(p)?;
+            let key: &'static str = match b {
+                Btn::Tool(Tool::Select) => "V",
+                Btn::Tool(Tool::Arrow) => "A",
+                Btn::Tool(Tool::Line) => "L",
+                Btn::Tool(Tool::Rect) => "R",
+                Btn::Tool(Tool::Ellipse) => "E",
+                Btn::Tool(Tool::Pen) => "P",
+                Btn::Tool(Tool::Highlighter) => "H",
+                Btn::Tool(Tool::Text) => "T",
+                Btn::Tool(Tool::Blur) => "B",
+                Btn::Tool(Tool::Step) => "N",
+                Btn::Tool(Tool::Zoom) => "Z",
+                Btn::Undo => "Ctrl+Z",
+                Btn::Redo => "Ctrl+Y",
+                Btn::Export => "Ctrl+E",
+                _ => "",
+            };
+            let text = match b {
+                Btn::Tool(Tool::Zoom) => "Zoom: drag a box on the video to zoom in there".to_string(),
+                Btn::Tool(Tool::Blur) => "Blur: hide something for as long as its bar lasts".to_string(),
+                Btn::Export => "Export an MP4 (copied to the clipboard)".to_string(),
+                Btn::Gif => "Export a GIF".to_string(),
+                Btn::WidthCycle => "Line width".to_string(),
+                Btn::BlurMode => "Blur or pixelate".to_string(),
+                Btn::Color(_) | Btn::Custom => "Colour".to_string(),
+                other => other.name().trim_start_matches("tool.").to_string(),
+            };
+            return Some(Tip { id: 100 + b.key() as u32 % 1000, text, key });
+        }
+        if inside(&l.play, x, y) {
+            return t(1, if self.player.playing() { "Pause" } else { "Play" }, "Space");
+        }
+        if inside(&l.split, x, y) {
+            return t(2, "Cut the clip in two at the playhead", "S");
+        }
+        if inside(&l.delete, x, y) {
+            return t(3, "Delete the selected clip or mark", "Del");
+        }
+        if inside(&l.zout, x, y) || inside(&l.zin, x, y) || inside(&l.slider, x, y) {
+            return t(4, "Zoom the timeline", "Ctrl + wheel");
+        }
+        if inside(&l.zfit, x, y) {
+            return t(5, "Show the whole video", "");
+        }
+        if inside(&l.ruler, x, y) {
+            return t(6, "Click or drag to move the playhead", "\u{2190} \u{2192}");
+        }
+        if inside(&l.head, x, y) && x < l.x0 {
+            if y < l.clips.bottom {
+                return t(7, "Video: the clips, in the order they play", "");
+            }
+            if y < l.audio.bottom + 4.0 * self.scale {
+                return t(8, "Audio: the sound of the clip above it", "");
+            }
+            return t(9, "Marks: arrows, text, blur and zooms over time", "");
+        }
+        if inside(&l.clips, x, y) {
+            return match self.clip_at(&l, x) {
+                Some((i, Some(_))) => Some(Tip { id: 20 + i as u32 * 3, text: "Drag to trim the clip".into(), key: "" }),
+                Some((i, None)) => Some(Tip { id: 21 + i as u32 * 3, text: "Drag to reorder, click to select".into(), key: "" }),
+                None => None,
+            };
+        }
+        if inside(&l.audio, x, y) {
+            return t(10, "Sound of the clip above (moves and trims with it)", "");
+        }
+        if inside(&l.items, x, y) {
+            return match self.bar_at(&l, x, y) {
+                Some((i, SpanMode::Move)) => Some(Tip { id: 5000 + i as u32 * 2, text: format!("{}: drag to move it in time", mark_look(&self.canvas.items[i], &theme::pal()).2), key: "" }),
+                Some((i, _)) => Some(Tip { id: 5001 + i as u32 * 2, text: "Drag to change when it shows".into(), key: "" }),
+                None if self.canvas.items.iter().all(|it| it.span.is_none()) => t(11, "Draw on the video to add a mark", ""),
+                None => None,
+            };
+        }
+        if inside(&l.scroll, x, y) && self.tv.zoom > 1.001 {
+            return t(12, "Scroll the timeline", "wheel");
+        }
+        None
     }
 
     /// Selection handles, text box and caret, zoom areas.
@@ -1558,6 +2070,22 @@ impl VEditor {
                 }
             }
         }
+    }
+}
+
+/// Colour, icon and name of a mark's bar.
+fn mark_look(it: &Item, p: &crate::palette::Palette) -> (u32, &'static str, String) {
+    match &it.shape {
+        Shape::Zoom { .. } => (p.purple.0, "\u{E71E}", "Zoom".into()),
+        Shape::Text { text, .. } => (it.color.hex(), "\u{E8D2}", text.lines().next().unwrap_or("Text").to_string()),
+        Shape::Step { .. } => (it.color.hex(), "\u{E9F5}", "Step".into()),
+        Shape::Arrow { .. } => (it.color.hex(), "\u{E72A}", "Arrow".into()),
+        Shape::Blur { .. } => (0x8E8E93, "\u{E7B3}", "Blur".into()),
+        Shape::Rect { .. } => (it.color.hex(), "\u{E739}", "Rectangle".into()),
+        Shape::Ellipse { .. } => (it.color.hex(), "\u{EA3A}", "Ellipse".into()),
+        Shape::Line { .. } => (it.color.hex(), "\u{E738}", "Line".into()),
+        Shape::Pen { .. } => (it.color.hex(), "\u{EDC6}", "Pen".into()),
+        Shape::Highlighter { .. } => (it.color.hex(), "\u{E7E6}", "Marker".into()),
     }
 }
 
